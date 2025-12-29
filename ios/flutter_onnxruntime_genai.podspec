@@ -14,9 +14,9 @@ A Flutter FFI plugin that wraps the Microsoft ONNX Runtime GenAI C-API
 for on-device multimodal inference, specifically designed for models like
 Phi-3.5 Vision on iOS devices.
                        DESC
-  s.homepage         = 'https://github.com/example/flutter_onnxruntime_genai'
+  s.homepage         = 'https://github.com/colymba/flutter_onnxruntime_genai'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Name' => 'your.email@example.com' }
+  s.author           = { 'Thierry François' => 'thierry@colymba.fr' }
 
   # Source configuration
   s.source           = { :path => '.' }

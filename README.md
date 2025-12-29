@@ -25,7 +25,7 @@ A Flutter FFI plugin that wraps the Microsoft [ONNX Runtime GenAI](https://githu
 dependencies:
   flutter_onnxruntime_genai:
     git:
-      url: https://github.com/example/flutter_onnxruntime_genai.git
+      url: https://github.com/colymba/flutter_onnxruntime_genai.git
 ```
 
 ### 2. Set Up ONNX Runtime GenAI Submodule

@@ -4,9 +4,9 @@ description: >
   for on-device multimodal inference, specifically designed for models like
   Phi-3.5 Vision on Android and iOS devices.
 version: 0.1.0
-homepage: https://github.com/example/flutter_onnxruntime_genai
-repository: https://github.com/example/flutter_onnxruntime_genai
-issue_tracker: https://github.com/example/flutter_onnxruntime_genai/issues
+homepage: https://github.com/colymba/flutter_onnxruntime_genai
+repository: https://github.com/colymba/flutter_onnxruntime_genai
+issue_tracker: https://github.com/colymba/flutter_onnxruntime_genai/issues
 
 environment:
   sdk: ^3.10.4

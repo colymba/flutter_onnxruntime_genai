@@ -3,7 +3,7 @@
 // This builds the native code with the Android NDK and packages the
 // prebuilt ONNX Runtime GenAI shared libraries.
 
-group = "com.example.flutter_onnxruntime_genai"
+group = "com.colymba.flutter_onnxruntime_genai"
 version = "0.1.0"
 
 buildscript {
@@ -28,7 +28,7 @@ rootProject.allprojects {
 apply plugin: "com.android.library"
 
 android {
-    namespace = "com.example.flutter_onnxruntime_genai"
+    namespace = "com.colymba.flutter_onnxruntime_genai"
 
     // Compile SDK version - bumping requires clients to update their app
     compileSdk = 36
