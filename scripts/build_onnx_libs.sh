@@ -252,10 +252,11 @@ build_ios() {
     
     # Create build directories
     IOS_DEVICE_BUILD_DIR="$BUILD_DIR/ios-device"
-    IOS_SIM_BUILD_DIR="$BUILD_DIR/ios-simulator"
+    IOS_SIM_ARM64_BUILD_DIR="$BUILD_DIR/ios-simulator-arm64"
+    IOS_SIM_X86_64_BUILD_DIR="$BUILD_DIR/ios-simulator-x86_64"
     XCFRAMEWORK_BUILD_DIR="$BUILD_DIR/xcframework"
     
-    mkdir -p "$IOS_DEVICE_BUILD_DIR" "$IOS_SIM_BUILD_DIR" "$XCFRAMEWORK_BUILD_DIR"
+    mkdir -p "$IOS_DEVICE_BUILD_DIR" "$IOS_SIM_ARM64_BUILD_DIR" "$IOS_SIM_X86_64_BUILD_DIR" "$XCFRAMEWORK_BUILD_DIR"
     
     # -------------------------------------------------------------------------
     # Build for iOS Device (arm64)
@@ -267,11 +268,14 @@ build_ios() {
     "$CMAKE_BIN" "$SUBMODULE_DIR" \
         -G "Xcode" \
         -DCMAKE_SYSTEM_NAME=iOS \
-        -DCMAKE_OSX_ARCHITECTURES="arm64" \
+        -DCMAKE_OSX_SYSROOT=iphoneos \
         -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_MIN_VERSION" \
         -DCMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH=NO \
+        -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
+        -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+        -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="" \
         -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
-        -DORT_GENAI_BUILD_TESTS=OFF \
+        -DENABLE_TESTS=OFF \
         -DORT_GENAI_BUILD_EXAMPLES=OFF \
         -DUSE_CUDA=OFF \
         -DUSE_ROCM=OFF \
@@ -289,33 +293,72 @@ build_ios() {
     }
     
     # -------------------------------------------------------------------------
-    # Build for iOS Simulator (arm64 + x86_64)
+    # Build for iOS Simulator (arm64)
     # -------------------------------------------------------------------------
-    log_info "Building for iOS Simulator (arm64, x86_64)..."
+    log_info "Building for iOS Simulator (arm64)..."
     
-    cd "$IOS_SIM_BUILD_DIR"
+    cd "$IOS_SIM_ARM64_BUILD_DIR"
     
     "$CMAKE_BIN" "$SUBMODULE_DIR" \
         -G "Xcode" \
         -DCMAKE_SYSTEM_NAME=iOS \
-        -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+        -DCMAKE_OSX_SYSROOT=iphonesimulator \
+        -DCMAKE_OSX_ARCHITECTURES="arm64" \
         -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_MIN_VERSION" \
         -DCMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH=NO \
         -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
-        -DORT_GENAI_BUILD_TESTS=OFF \
+        -DENABLE_TESTS=OFF \
         -DORT_GENAI_BUILD_EXAMPLES=OFF \
         -DUSE_CUDA=OFF \
         -DUSE_ROCM=OFF \
         -DENABLE_PYTHON=OFF \
         -DENABLE_MODEL_BENCHMARK=OFF \
         -DBUILD_SHARED_LIBS=OFF \
+        -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
+        -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+        -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="" \
         || {
-            log_error "CMake configuration failed for iOS simulator"
+            log_error "CMake configuration failed for iOS simulator (arm64)"
             exit 1
         }
     
     "$CMAKE_BIN" --build . --config "$CMAKE_BUILD_TYPE" -- -sdk iphonesimulator || {
-        log_error "Build failed for iOS simulator"
+        log_error "Build failed for iOS simulator (arm64)"
+        exit 1
+    }
+
+    # -------------------------------------------------------------------------
+    # Build for iOS Simulator (x86_64)
+    # -------------------------------------------------------------------------
+    log_info "Building for iOS Simulator (x86_64)..."
+
+    cd "$IOS_SIM_X86_64_BUILD_DIR"
+
+    "$CMAKE_BIN" "$SUBMODULE_DIR" \
+        -G "Xcode" \
+        -DCMAKE_SYSTEM_NAME=iOS \
+        -DCMAKE_OSX_SYSROOT=iphonesimulator \
+        -DCMAKE_OSX_ARCHITECTURES="x86_64" \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_MIN_VERSION" \
+        -DCMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH=NO \
+        -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
+        -DENABLE_TESTS=OFF \
+        -DORT_GENAI_BUILD_EXAMPLES=OFF \
+        -DUSE_CUDA=OFF \
+        -DUSE_ROCM=OFF \
+        -DENABLE_PYTHON=OFF \
+        -DENABLE_MODEL_BENCHMARK=OFF \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
+        -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+        -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="" \
+        || {
+            log_error "CMake configuration failed for iOS simulator (x86_64)"
+            exit 1
+        }
+    
+    "$CMAKE_BIN" --build . --config "$CMAKE_BUILD_TYPE" -- -sdk iphonesimulator || {
+        log_error "Build failed for iOS simulator (x86_64)"
         exit 1
     }
     
@@ -324,49 +367,56 @@ build_ios() {
     # -------------------------------------------------------------------------
     log_info "Creating XCFramework..."
     
-    # Find the built frameworks/libraries
-    DEVICE_LIB=$(find "$IOS_DEVICE_BUILD_DIR" -name "*.framework" -o -name "libonnxruntime-genai.a" | head -1)
-    SIM_LIB=$(find "$IOS_SIM_BUILD_DIR" -name "*.framework" -o -name "libonnxruntime-genai.a" | head -1)
+    # Find the built frameworks/libraries (excluding compiler identification junk)
+    find_lib() {
+        find "$1" -name "libonnxruntime-genai.dylib" -o -name "libonnxruntime-genai.a" -o -name "onnxruntime-genai.framework" | grep -v "CompilerId" | head -1
+    }
+
+    DEVICE_LIB=$(find_lib "$IOS_DEVICE_BUILD_DIR")
+    SIM_ARM64_LIB=$(find_lib "$IOS_SIM_ARM64_BUILD_DIR")
+    SIM_X86_64_LIB=$(find_lib "$IOS_SIM_X86_64_BUILD_DIR")
     
-    if [ -z "$DEVICE_LIB" ] || [ -z "$SIM_LIB" ]; then
-        log_warn "Could not find built libraries, attempting alternative approach..."
-        
+    if [ -z "$DEVICE_LIB" ]; then
         # Try to find in Release subdirectory
-        DEVICE_LIB=$(find "$IOS_DEVICE_BUILD_DIR/Release-iphoneos" -name "*.a" 2>/dev/null | head -1)
-        SIM_LIB=$(find "$IOS_SIM_BUILD_DIR/Release-iphonesimulator" -name "*.a" 2>/dev/null | head -1)
+        DEVICE_LIB=$(find "$IOS_DEVICE_BUILD_DIR/Release-iphoneos" -name "libonnxruntime-genai.*" 2>/dev/null | head -1)
+    fi
+    if [ -z "$SIM_ARM64_LIB" ]; then
+        SIM_ARM64_LIB=$(find "$IOS_SIM_ARM64_BUILD_DIR/Release-iphonesimulator" -name "libonnxruntime-genai.*" 2>/dev/null | head -1)
+    fi
+    if [ -z "$SIM_X86_64_LIB" ]; then
+        SIM_X86_64_LIB=$(find "$IOS_SIM_X86_64_BUILD_DIR/Release-iphonesimulator" -name "libonnxruntime-genai.*" 2>/dev/null | head -1)
     fi
     
-    if [ -n "$DEVICE_LIB" ] && [ -n "$SIM_LIB" ]; then
+    if [ -n "$DEVICE_LIB" ] && [ -n "$SIM_ARM64_LIB" ] && [ -n "$SIM_X86_64_LIB" ]; then
         mkdir -p "$IOS_OUTPUT_DIR"
         
-        # Check if it's a framework or static library
-        if [[ "$DEVICE_LIB" == *.framework ]]; then
-            xcodebuild -create-xcframework \
-                -framework "$DEVICE_LIB" \
-                -framework "$SIM_LIB" \
-                -output "$IOS_OUTPUT_DIR/onnxruntime-genai.xcframework"
-        else
-            # For static libraries, we need to create a framework structure first
-            log_info "Creating framework from static libraries..."
-            
-            DEVICE_FRAMEWORK_DIR="$XCFRAMEWORK_BUILD_DIR/device/onnxruntime-genai.framework"
-            SIM_FRAMEWORK_DIR="$XCFRAMEWORK_BUILD_DIR/simulator/onnxruntime-genai.framework"
-            
-            mkdir -p "$DEVICE_FRAMEWORK_DIR/Headers"
-            mkdir -p "$SIM_FRAMEWORK_DIR/Headers"
-            
-            # Copy static library
-            cp "$DEVICE_LIB" "$DEVICE_FRAMEWORK_DIR/onnxruntime-genai"
-            cp "$SIM_LIB" "$SIM_FRAMEWORK_DIR/onnxruntime-genai"
-            
-            # Copy headers
-            if [ -d "$SUBMODULE_DIR/src" ]; then
-                cp "$SUBMODULE_DIR/src/ort_genai_c.h" "$DEVICE_FRAMEWORK_DIR/Headers/" 2>/dev/null || true
-                cp "$SUBMODULE_DIR/src/ort_genai_c.h" "$SIM_FRAMEWORK_DIR/Headers/" 2>/dev/null || true
-            fi
-            
-            # Create Info.plist
-            cat > "$DEVICE_FRAMEWORK_DIR/Info.plist" << 'PLIST'
+        # Merge simulator architectures
+        SIM_FAT_LIB_DIR="$XCFRAMEWORK_BUILD_DIR/simulator-fat"
+        mkdir -p "$SIM_FAT_LIB_DIR"
+        SIM_FAT_LIB="$SIM_FAT_LIB_DIR/libonnxruntime-genai"
+        
+        log_info "Merging simulator architectures (arm64 + x86_64)..."
+        lipo -create "$SIM_ARM64_LIB" "$SIM_X86_64_LIB" -output "$SIM_FAT_LIB"
+
+        # Create framework structures
+        DEVICE_FRAMEWORK_DIR="$XCFRAMEWORK_BUILD_DIR/device/onnxruntime-genai.framework"
+        SIM_FRAMEWORK_DIR="$XCFRAMEWORK_BUILD_DIR/simulator/onnxruntime-genai.framework"
+        
+        mkdir -p "$DEVICE_FRAMEWORK_DIR/Headers"
+        mkdir -p "$SIM_FRAMEWORK_DIR/Headers"
+        
+        # Copy binaries
+        cp "$DEVICE_LIB" "$DEVICE_FRAMEWORK_DIR/onnxruntime-genai"
+        cp "$SIM_FAT_LIB" "$SIM_FRAMEWORK_DIR/onnxruntime-genai"
+        
+        # Copy headers
+        if [ -d "$SUBMODULE_DIR/src" ]; then
+            cp "$SUBMODULE_DIR/src/ort_genai_c.h" "$DEVICE_FRAMEWORK_DIR/Headers/" 2>/dev/null || true
+            cp "$SUBMODULE_DIR/src/ort_genai_c.h" "$SIM_FRAMEWORK_DIR/Headers/" 2>/dev/null || true
+        fi
+        
+        # Create Info.plist
+        cat > "$DEVICE_FRAMEWORK_DIR/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -384,21 +434,21 @@ build_ios() {
 </dict>
 </plist>
 PLIST
-            cp "$DEVICE_FRAMEWORK_DIR/Info.plist" "$SIM_FRAMEWORK_DIR/Info.plist"
-            
-            # Create XCFramework
-            xcodebuild -create-xcframework \
-                -framework "$DEVICE_FRAMEWORK_DIR" \
-                -framework "$SIM_FRAMEWORK_DIR" \
-                -output "$IOS_OUTPUT_DIR/onnxruntime-genai.xcframework"
-        fi
+        cp "$DEVICE_FRAMEWORK_DIR/Info.plist" "$SIM_FRAMEWORK_DIR/Info.plist"
         
-        log_info "XCFramework created at: $IOS_OUTPUT_DIR/onnxruntime-genai.xcframework"
+        # Create XCFramework
+        rm -rf "$IOS_OUTPUT_DIR/onnxruntime-genai.xcframework"
+        xcodebuild -create-xcframework \
+            -framework "$DEVICE_FRAMEWORK_DIR" \
+            -framework "$SIM_FRAMEWORK_DIR" \
+            -output "$IOS_OUTPUT_DIR/onnxruntime-genai.xcframework"
+        
+        log_info "XCFRAMEWORK created at: $IOS_OUTPUT_DIR/onnxruntime-genai.xcframework"
     else
-        log_error "Could not find built libraries for XCFramework creation"
-        log_info "Device lib search path: $IOS_DEVICE_BUILD_DIR"
-        log_info "Simulator lib search path: $IOS_SIM_BUILD_DIR"
-        find "$BUILD_DIR" -name "*.a" -o -name "*.framework" 2>/dev/null
+        log_error "Could not find built libraries for XCFRAMEWORK creation"
+        log_info "Device lib search result: $DEVICE_LIB"
+        log_info "Simulator arm64 lib search result: $SIM_ARM64_LIB"
+        log_info "Simulator x86_64 lib search result: $SIM_X86_64_LIB"
         exit 1
     fi
     
