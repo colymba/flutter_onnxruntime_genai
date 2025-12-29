@@ -1,0 +1,138 @@
+// Flutter ONNX Runtime GenAI Plugin - Android Gradle Configuration
+//
+// This builds the native code with the Android NDK and packages the
+// prebuilt ONNX Runtime GenAI shared libraries.
+
+group = "com.example.flutter_onnxruntime_genai"
+version = "0.1.0"
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        // The Android Gradle Plugin knows how to build native code with the NDK.
+        classpath("com.android.tools.build:gradle:8.11.1")
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+
+android {
+    namespace = "com.example.flutter_onnxruntime_genai"
+
+    // Compile SDK version - bumping requires clients to update their app
+    compileSdk = 36
+
+    // Use the NDK version from the Flutter project, or specify a version
+    // ndkVersion = "26.1.10909125"
+    ndkVersion = android.ndkVersion
+
+    // CMake configuration for building native code
+    externalNativeBuild {
+        cmake {
+            path = "../src/CMakeLists.txt"
+            
+            // CMake 3.10 is the minimum required by Flutter tooling
+            // version "3.10.2"
+        }
+    }
+
+    defaultConfig {
+        minSdk = 24
+        
+        // Configure CMake arguments for native build
+        externalNativeBuild {
+            cmake {
+                // CRITICAL: 16KB page alignment for Android 15+
+                arguments "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384"
+                
+                // Build for these ABIs
+                abiFilters "arm64-v8a", "x86_64"
+                
+                // C++ standard
+                cppFlags "-std=c++17"
+            }
+        }
+        
+        // NDK configuration
+        ndk {
+            // Target ABIs
+            abiFilters "arm64-v8a", "x86_64"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    // Source sets configuration
+    sourceSets {
+        main {
+            // Include prebuilt JNI libraries (ONNX Runtime GenAI)
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+
+    // Build types
+    buildTypes {
+        release {
+            // Enable minification in release builds
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+        }
+        
+        debug {
+            // Debug build settings
+            debuggable true
+        }
+    }
+
+    // Ensure the prebuilt libraries are packaged
+    packagingOptions {
+        // Don't strip debug symbols from ONNX Runtime (useful for debugging)
+        doNotStrip "*/arm64-v8a/libonnxruntime-genai.so"
+        doNotStrip "*/x86_64/libonnxruntime-genai.so"
+        
+        // Exclude duplicate files
+        pickFirst 'lib/arm64-v8a/libc++_shared.so'
+        pickFirst 'lib/x86_64/libc++_shared.so'
+    }
+}
+
+// Task to verify JNI libraries exist before build
+tasks.register('verifyJniLibs') {
+    doLast {
+        def jniLibsDir = file('src/main/jniLibs')
+        def arm64Dir = file('src/main/jniLibs/arm64-v8a')
+        def x86_64Dir = file('src/main/jniLibs/x86_64')
+        
+        if (!jniLibsDir.exists()) {
+            logger.warn("WARNING: JNI libs directory not found: ${jniLibsDir}")
+            logger.warn("Run ./scripts/build_onnx_libs.sh to build native libraries")
+        }
+        
+        if (!new File(arm64Dir, 'libonnxruntime-genai.so').exists()) {
+            logger.warn("WARNING: arm64-v8a library not found")
+        }
+        
+        if (!new File(x86_64Dir, 'libonnxruntime-genai.so').exists()) {
+            logger.warn("WARNING: x86_64 library not found")
+        }
+    }
+}
+
+// Run verification before native builds
+tasks.matching { it.name.startsWith('externalNativeBuild') }.configureEach {
+    dependsOn 'verifyJniLibs'
+}

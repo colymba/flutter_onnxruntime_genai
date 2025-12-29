@@ -1,0 +1,6 @@
+# Placeholder for arm64-v8a ONNX Runtime GenAI native library
+#
+# After running ./scripts/build_onnx_libs.sh, this directory will contain:
+#   - libonnxruntime-genai.so
+#
+# This library is built with 16KB page alignment for Android 15+ compatibility.

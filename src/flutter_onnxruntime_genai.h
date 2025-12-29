@@ -1,0 +1,109 @@
+/**
+ * @file flutter_onnxruntime_genai.h
+ * @brief Header file for Flutter FFI Bridge to ONNX Runtime GenAI
+ *
+ * This header declares the C FFI functions that bridge Dart code with the
+ * ONNX Runtime GenAI C-API for multimodal inference.
+ */
+
+#ifndef FLUTTER_ONNXRUNTIME_GENAI_H
+#define FLUTTER_ONNXRUNTIME_GENAI_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+// Platform-specific export macro
+#if defined(_WIN32)
+#define FFI_PLUGIN_EXPORT __declspec(dllexport)
+#elif defined(__GNUC__) && __GNUC__ >= 4
+#define FFI_PLUGIN_EXPORT __attribute__((visibility("default")))
+#else
+#define FFI_PLUGIN_EXPORT
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// =============================================================================
+// Health Check & Utility Functions
+// =============================================================================
+
+/**
+ * @brief Check if the native library and model can be loaded.
+ *
+ * Use this function to verify that:
+ * 1. The native library is properly linked
+ * 2. The model path is accessible
+ * 3. The model can be loaded successfully
+ *
+ * @param model_path Path to the ONNX GenAI model directory
+ * @return Status code:
+ *         1: Success - model loaded and verified
+ *        -1: NULL or empty path provided
+ *        -2: Model creation failed
+ *        -3: Tokenizer creation failed
+ */
+FFI_PLUGIN_EXPORT int32_t check_native_health(const char *model_path);
+
+/**
+ * @brief Get the library version string.
+ * @return Version string in format "major.minor.patch"
+ */
+FFI_PLUGIN_EXPORT const char *get_library_version();
+
+/**
+ * @brief Shutdown the ONNX GenAI library and free global resources.
+ * Call this when the application is shutting down.
+ */
+FFI_PLUGIN_EXPORT void shutdown_onnx_genai();
+
+// =============================================================================
+// Inference Functions
+// =============================================================================
+
+/**
+ * @brief Run multimodal inference with text and optional image.
+ *
+ * This function is designed for vision-language models like Phi-3.5 Vision.
+ * It processes both the text prompt and image together for generation.
+ *
+ * WARNING: This is a LONG-RUNNING operation!
+ * MUST be called from a background Dart Isolate, NOT the main UI isolate.
+ * Calling from the main isolate will block the UI and cause dropped frames.
+ *
+ * @param model_path Path to the ONNX GenAI model directory
+ * @param prompt The text prompt for generation
+ * @param image_path Path to the image file (JPEG, PNG, etc.), or NULL for
+ * text-only
+ * @return Generated text on success, or error message prefixed with "ERROR:" on
+ * failure The returned string is valid until the next call from the same
+ * thread.
+ */
+FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
+                                            const char *prompt,
+                                            const char *image_path);
+
+/**
+ * @brief Run text-only inference with the model.
+ *
+ * A simplified version of run_inference for text-only generation.
+ *
+ * WARNING: This is a LONG-RUNNING operation!
+ * MUST be called from a background Dart Isolate, NOT the main UI isolate.
+ *
+ * @param model_path Path to the ONNX GenAI model directory
+ * @param prompt The text prompt for generation
+ * @param max_length Maximum number of tokens to generate (0 for model default)
+ * @return Generated text on success, or error message prefixed with "ERROR:" on
+ * failure
+ */
+FFI_PLUGIN_EXPORT const char *run_text_inference(const char *model_path,
+                                                 const char *prompt,
+                                                 int32_t max_length);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // FLUTTER_ONNXRUNTIME_GENAI_H

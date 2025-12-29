@@ -1,0 +1,6 @@
+# Placeholder for x86_64 ONNX Runtime GenAI native library
+#
+# After running ./scripts/build_onnx_libs.sh, this directory will contain:
+#   - libonnxruntime-genai.so
+#
+# This library is for Android emulator/x86_64 device support.

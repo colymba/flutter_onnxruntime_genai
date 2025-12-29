@@ -1,0 +1,6 @@
+# Placeholder for ONNX Runtime GenAI XCFramework
+#
+# After running ./scripts/build_onnx_libs.sh, this directory will contain:
+#   - onnxruntime-genai.xcframework/
+#
+# The XCFramework includes both device (arm64) and simulator (arm64, x86_64) slices.
