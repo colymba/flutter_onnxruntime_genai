@@ -41,3 +41,8 @@ topics:
   - ai
   - ffi
   - vision
+  - genai
+  - onnxruntime
+  - onnxruntime-genai
+  - multimodal
+  - inference
