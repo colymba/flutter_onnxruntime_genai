@@ -61,6 +61,37 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+
+get_android_sdk_path() {
+    if [ -n "$ANDROID_HOME" ]; then
+        echo "$ANDROID_HOME"
+    elif [ -n "$ANDROID_SDK_ROOT" ]; then
+        echo "$ANDROID_SDK_ROOT"
+    elif [ -d "$HOME/Library/Android/sdk" ]; then
+        echo "$HOME/Library/Android/sdk"
+    else
+        echo ""
+    fi
+}
+
+get_android_ndk_path() {
+    if [ -n "$ANDROID_NDK_HOME" ]; then
+        echo "$ANDROID_NDK_HOME"
+    elif [ -n "$ANDROID_NDK" ]; then
+        echo "$ANDROID_NDK"
+    else
+        local sdk_path=$(get_android_sdk_path)
+        if [ -n "$sdk_path" ] && [ -d "$sdk_path/ndk" ]; then
+            # Find latest NDK version
+            echo $(find "$sdk_path/ndk" -maxdepth 1 -type d | sort -V | tail -1)
+        else
+            echo ""
+        fi
+    fi
+}
+
+CMAKE_BIN="" # Global variable to store CMake path
+
 check_prerequisites() {
     log_info "Checking prerequisites..."
     
@@ -70,11 +101,29 @@ check_prerequisites() {
         log_info "Please run: git submodule update --init --recursive"
         exit 1
     fi
-    
+
     # Check CMake
     if ! command -v cmake &> /dev/null; then
-        log_error "CMake not found. Please install CMake 3.20+"
-        exit 1
+        log_info "CMake not found in system PATH, trying to find it in Android SDK..."
+        local android_sdk_path=$(get_android_sdk_path)
+        if [ -n "$android_sdk_path" ] && [ -d "$android_sdk_path/cmake" ]; then
+            # Search for cmake within Android SDK's cmake/<version>/bin
+            CMAKE_FOUND_IN_SDK=$(find "$android_sdk_path/cmake/" -maxdepth 3 -name "cmake" -type f | sort -rV | head -1)
+            if [ -n "$CMAKE_FOUND_IN_SDK" ]; then
+                CMAKE_BIN="$CMAKE_FOUND_IN_SDK"
+                log_info "Using CMake from Android SDK: $CMAKE_BIN"
+                # Add Android SDK CMake to PATH for this script execution
+                export PATH="$(dirname "$CMAKE_BIN"):$PATH"
+            fi
+        fi
+        
+        if [ -z "$CMAKE_BIN" ]; then
+            log_error "CMake 3.20+ not found. Please install CMake 3.20+ or ensure it's in your PATH or Android SDK path."
+            exit 1
+        fi
+    else
+        CMAKE_BIN=$(command -v cmake)
+        log_info "Using system CMake: $CMAKE_BIN"
     fi
     
     # Check Python
@@ -86,22 +135,17 @@ check_prerequisites() {
     log_info "Prerequisites check passed."
 }
 
+# The actual check for NDK path to be used by build_android
 check_android_ndk() {
-    # Find Android NDK
-    if [ -n "$ANDROID_NDK_HOME" ]; then
-        NDK_PATH="$ANDROID_NDK_HOME"
-    elif [ -n "$ANDROID_NDK" ]; then
-        NDK_PATH="$ANDROID_NDK"
-    elif [ -d "$HOME/Library/Android/sdk/ndk" ]; then
-        # Find latest NDK version
-        NDK_PATH=$(find "$HOME/Library/Android/sdk/ndk" -maxdepth 1 -type d | sort -V | tail -1)
-    else
-        log_error "Android NDK not found. Set ANDROID_NDK_HOME or ANDROID_NDK environment variable."
+    export NDK_PATH=$(get_android_ndk_path) # Export NDK_PATH for use by cmake
+
+    if [ -z "$NDK_PATH" ]; then
+        log_error "Android NDK not found. Set ANDROID_NDK_HOME or ANDROID_NDK environment variable, or ensure Android SDK is found."
         exit 1
     fi
-    
+
     if [ ! -f "$NDK_PATH/build/cmake/android.toolchain.cmake" ]; then
-        log_error "Invalid Android NDK path: $NDK_PATH"
+        log_error "Invalid Android NDK path: $NDK_PATH (android.toolchain.cmake not found)"
         exit 1
     fi
     
@@ -143,7 +187,7 @@ build_android() {
         
         # Configure with CMake
         # CRITICAL: Include 16KB page alignment flag for Android 15+
-        cmake "$SUBMODULE_DIR" \
+        "$CMAKE_BIN" "$SUBMODULE_DIR" \
             -DCMAKE_TOOLCHAIN_FILE="$NDK_PATH/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI="$ANDROID_ABI" \
             -DANDROID_PLATFORM="android-$ANDROID_MIN_SDK" \
@@ -164,7 +208,7 @@ build_android() {
             }
         
         # Build
-        cmake --build . --config "$CMAKE_BUILD_TYPE" -j "$PARALLEL_JOBS" || {
+        "$CMAKE_BIN" --build . --config "$CMAKE_BUILD_TYPE" -j "$PARALLEL_JOBS" || {
             log_error "Build failed for $ARCH"
             exit 1
         }
@@ -220,7 +264,7 @@ build_ios() {
     
     cd "$IOS_DEVICE_BUILD_DIR"
     
-    cmake "$SUBMODULE_DIR" \
+    "$CMAKE_BIN" "$SUBMODULE_DIR" \
         -G "Xcode" \
         -DCMAKE_SYSTEM_NAME=iOS \
         -DCMAKE_OSX_ARCHITECTURES="arm64" \
@@ -239,7 +283,7 @@ build_ios() {
             exit 1
         }
     
-    cmake --build . --config "$CMAKE_BUILD_TYPE" -- -sdk iphoneos || {
+    "$CMAKE_BIN" --build . --config "$CMAKE_BUILD_TYPE" -- -sdk iphoneos || {
         log_error "Build failed for iOS device"
         exit 1
     }
@@ -251,7 +295,7 @@ build_ios() {
     
     cd "$IOS_SIM_BUILD_DIR"
     
-    cmake "$SUBMODULE_DIR" \
+    "$CMAKE_BIN" "$SUBMODULE_DIR" \
         -G "Xcode" \
         -DCMAKE_SYSTEM_NAME=iOS \
         -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
@@ -270,7 +314,7 @@ build_ios() {
             exit 1
         }
     
-    cmake --build . --config "$CMAKE_BUILD_TYPE" -- -sdk iphonesimulator || {
+    "$CMAKE_BIN" --build . --config "$CMAKE_BUILD_TYPE" -- -sdk iphonesimulator || {
         log_error "Build failed for iOS simulator"
         exit 1
     }
