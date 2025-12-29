@@ -153,6 +153,10 @@ build_android() {
             -DCMAKE_EXE_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
             -DORT_GENAI_BUILD_TESTS=OFF \
             -DORT_GENAI_BUILD_EXAMPLES=OFF \
+            -DUSE_CUDA=OFF \
+            -DUSE_ROCM=OFF \
+            -DENABLE_PYTHON=OFF \
+            -DENABLE_MODEL_BENCHMARK=OFF \
             -DBUILD_SHARED_LIBS=ON \
             || {
                 log_error "CMake configuration failed for $ARCH"
@@ -225,6 +229,10 @@ build_ios() {
         -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
         -DORT_GENAI_BUILD_TESTS=OFF \
         -DORT_GENAI_BUILD_EXAMPLES=OFF \
+        -DUSE_CUDA=OFF \
+        -DUSE_ROCM=OFF \
+        -DENABLE_PYTHON=OFF \
+        -DENABLE_MODEL_BENCHMARK=OFF \
         -DBUILD_SHARED_LIBS=OFF \
         || {
             log_error "CMake configuration failed for iOS device"
@@ -252,6 +260,10 @@ build_ios() {
         -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
         -DORT_GENAI_BUILD_TESTS=OFF \
         -DORT_GENAI_BUILD_EXAMPLES=OFF \
+        -DUSE_CUDA=OFF \
+        -DUSE_ROCM=OFF \
+        -DENABLE_PYTHON=OFF \
+        -DENABLE_MODEL_BENCHMARK=OFF \
         -DBUILD_SHARED_LIBS=OFF \
         || {
             log_error "CMake configuration failed for iOS simulator"

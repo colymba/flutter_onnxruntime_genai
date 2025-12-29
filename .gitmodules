@@ -1,0 +1,3 @@
+[submodule "native_src/onnxruntime-genai"]
+	path = native_src/onnxruntime-genai
+	url = https://github.com/microsoft/onnxruntime-genai.git
