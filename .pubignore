@@ -1,0 +1,16 @@
+# Exclude large native source code and submodules
+native_src/
+ios/Frameworks/
+android/src/main/jniLibs/
+
+# Exclude scripts (optional, but keep them if they are useful for the user)
+# scripts/
+
+# Exclude build artifacts
+build/
+.dart_tool/
+.packages
+pubspec.lock
+
+# Exclude OS-specific files
+.DS_Store
