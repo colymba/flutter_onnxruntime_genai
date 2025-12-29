@@ -2,6 +2,18 @@
 
 A Flutter FFI plugin that wraps the Microsoft [ONNX Runtime GenAI](https://github.com/microsoft/onnxruntime-genai) C-API for on-device multimodal inference.
 
+> [!WARNING]
+> **Experimental & Untested**: This package is currently in an early experimental stage and has not been thoroughly tested. APIs may change significantly without notice.
+
+## 🤝 Contributing & Help Wanted
+
+We are looking for help to develop and test this package! Whether you have experience with Dart FFI, ONNX Runtime, or native mobile development (Swift/Kotlin/C++), your contributions are highly welcome.
+
+If you'd like to help, please:
+- Open an issue to discuss proposed changes.
+- Submit pull requests for bug fixes or new features.
+- Help with testing on different devices and documenting the results.
+
 ## Features
 
 - **Vision-Language Models**: Run models like Phi-3.5 Vision on-device
