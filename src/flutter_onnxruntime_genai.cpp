@@ -19,6 +19,11 @@
 #include <mutex>
 #include <string>
 #include <cstdio>
+#include <signal.h>
+
+#ifdef __ANDROID__
+#include <unistd.h>
+#endif
 
 // =============================================================================
 // Debug logging macros
@@ -43,6 +48,56 @@
 #endif
 
 // =============================================================================
+// ONNX GenAI internal logging callback
+// =============================================================================
+
+#if ONNX_DEBUG_LOG
+static void oga_log_callback(const char* message, size_t length) {
+  (void)length;
+  #ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "OnnxGenAI-Internal", "%s", message);
+  #else
+    fprintf(stderr, "[OnnxGenAI-Internal] %s\n", message);
+  #endif
+}
+#endif
+
+// =============================================================================
+// Signal handler for crash debugging
+// =============================================================================
+
+#if ONNX_DEBUG_LOG
+static void crash_signal_handler(int sig) {
+  const char* sig_name = "UNKNOWN";
+  switch (sig) {
+    case SIGSEGV: sig_name = "SIGSEGV"; break;
+    case SIGABRT: sig_name = "SIGABRT"; break;
+    case SIGFPE: sig_name = "SIGFPE"; break;
+    case SIGILL: sig_name = "SIGILL"; break;
+    case SIGBUS: sig_name = "SIGBUS"; break;
+  }
+  #ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_ERROR, "OnnxGenAI", 
+                        "[CRASH] Caught signal %d (%s)", sig, sig_name);
+  #else
+    fprintf(stderr, "[OnnxGenAI CRASH] Caught signal %d (%s)\n", sig, sig_name);
+  #endif
+  // Re-raise signal for default handling (to generate crash report)
+  signal(sig, SIG_DFL);
+  raise(sig);
+}
+
+static void install_signal_handlers() {
+  signal(SIGSEGV, crash_signal_handler);
+  signal(SIGABRT, crash_signal_handler);
+  signal(SIGFPE, crash_signal_handler);
+  signal(SIGILL, crash_signal_handler);
+  signal(SIGBUS, crash_signal_handler);
+  DEBUG_LOG("Signal handlers installed for crash debugging");
+}
+#endif
+
+// =============================================================================
 // Thread-safe result buffer management
 // =============================================================================
 
@@ -57,7 +112,35 @@ std::mutex g_init_mutex;
 
 // Track initialization state
 bool g_initialized = false;
+
+// Track if logging/signal handlers are set up
+bool g_debug_initialized = false;
 } // namespace
+
+// Initialize debug features (logging + signal handlers)
+static void init_debug_features() {
+#if ONNX_DEBUG_LOG
+  if (!g_debug_initialized) {
+    g_debug_initialized = true;
+    install_signal_handlers();
+    // Enable ONNX GenAI internal logging
+    OgaResult* result = OgaSetLogBool("enabled", true);
+    if (result != nullptr) {
+      DEBUG_ERROR("Failed to enable OGA logging: %s", OgaResultGetError(result));
+      OgaDestroyResult(result);
+    } else {
+      DEBUG_LOG("OGA internal logging enabled");
+    }
+    result = OgaSetLogCallback(oga_log_callback);
+    if (result != nullptr) {
+      DEBUG_ERROR("Failed to set OGA log callback: %s", OgaResultGetError(result));
+      OgaDestroyResult(result);
+    } else {
+      DEBUG_LOG("OGA log callback set");
+    }
+  }
+#endif
+}
 
 /**
  * @brief Safely copy a string to the result buffer and return a pointer.
@@ -117,6 +200,7 @@ extern "C" {
  *         1: Model loaded and verified successfully
  */
 FFI_PLUGIN_EXPORT int32_t check_native_health(const char *model_path) {
+  init_debug_features();
   DEBUG_LOG("=== check_native_health START ===");
   DEBUG_LOG("model_path: %s", model_path ? model_path : "NULL");
 
@@ -361,6 +445,7 @@ FFI_PLUGIN_EXPORT const char *run_text_inference(const char *model_path,
 FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
                                             const char *prompt,
                                             const char *image_path) {
+  init_debug_features();
   DEBUG_LOG("=== run_inference START ===");
   DEBUG_LOG("model_path: %s", model_path ? model_path : "NULL");
   DEBUG_LOG("prompt length: %zu", prompt ? strlen(prompt) : 0);
@@ -421,24 +506,25 @@ FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
       return set_error(g_error_buffer);
     }
     DEBUG_LOG("Step 4: Image loaded successfully");
-
-    // Process images with prompt
-    DEBUG_LOG("Step 5: Processing image with prompt...");
-    result = OgaProcessorProcessImages(processor, prompt, images,
-                                       &named_tensors);
-    if (check_oga_result(result, "Image processing failed") ||
-        named_tensors == nullptr) {
-      DEBUG_ERROR("Image processing failed");
-      OgaDestroyImages(images);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-    DEBUG_LOG("Step 5: Image processed successfully");
   } else {
-    DEBUG_LOG("Step 4-5: No image provided, skipping image processing");
+    DEBUG_LOG("Step 4: No image provided, will process text-only through multimodal processor");
   }
+
+  // Process through multimodal processor (required for vision models even for text-only)
+  DEBUG_LOG("Step 5: Processing prompt through multimodal processor (images=%p)...",
+            (void *)images);
+  result = OgaProcessorProcessImages(processor, prompt, images, &named_tensors);
+  if (check_oga_result(result, "Multimodal processing failed") ||
+      named_tensors == nullptr) {
+    DEBUG_ERROR("Multimodal processing failed");
+    if (images)
+      OgaDestroyImages(images);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 5: Multimodal processing completed successfully");
 
   // Create generator parameters
   DEBUG_LOG("Step 6: Creating generator params...");
@@ -456,15 +542,53 @@ FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
     OgaDestroyModel(model);
     return set_error(g_error_buffer);
   }
+  
+  // Set max_length to limit memory usage for KV-cache
+  // Use 2048 tokens - must be larger than input prompt size (~954 tokens)
+  DEBUG_LOG("Step 6a: Setting max_length to 2048 to limit memory...");
+  result = OgaGeneratorParamsSetSearchNumber(params, "max_length", 2048.0);
+  if (result != nullptr) {
+    DEBUG_ERROR("Failed to set max_length: %s", OgaResultGetError(result));
+    OgaDestroyResult(result);
+    // Non-fatal, continue anyway
+  } else {
+    DEBUG_LOG("Step 6a: max_length set successfully");
+  }
+  
   DEBUG_LOG("Step 6: Generator params created successfully");
 
-  // Create generator
-  DEBUG_LOG("Step 7: Creating generator...");
+  // Create generator - this is often where multimodal models crash
+  // due to memory allocation or model graph initialization issues
   OgaGenerator *generator = nullptr;
+  DEBUG_LOG("Step 7: Creating generator...");
+  DEBUG_LOG("Step 7a: Generator pointer address: %p", (void *)&generator);
+  DEBUG_LOG("Step 7b: Model pointer: %p", (void *)model);
+  DEBUG_LOG("Step 7c: Params pointer: %p", (void *)params);
+  DEBUG_LOG("Step 7d: named_tensors: %p, images: %p",
+            (void *)named_tensors, (void *)images);
+#ifdef __ANDROID__
+  // Force log flush before potentially crashing call
+  __android_log_print(ANDROID_LOG_DEBUG, "OnnxGenAI",
+                      "[DEBUG] Step 7e: About to call OgaCreateGenerator...");
+#else
+  fprintf(stderr, "[OnnxGenAI] Step 7e: About to call OgaCreateGenerator...\n");
+  fflush(stderr);
+#endif
+
   result = OgaCreateGenerator(model, params, &generator);
+
+#ifdef __ANDROID__
+  __android_log_print(ANDROID_LOG_DEBUG, "OnnxGenAI",
+                      "[DEBUG] Step 7f: OgaCreateGenerator returned, result=%p",
+                      (void *)result);
+#else
+  fprintf(stderr, "[OnnxGenAI] Step 7f: OgaCreateGenerator returned\n");
+  fflush(stderr);
+#endif
+
   if (check_oga_result(result, "Generator creation failed") ||
       generator == nullptr) {
-    DEBUG_ERROR("Generator creation failed");
+    DEBUG_ERROR("Generator creation failed - generator=%p", (void *)generator);
     OgaDestroyGeneratorParams(params);
     if (named_tensors)
       OgaDestroyNamedTensors(named_tensors);
@@ -475,65 +599,45 @@ FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
     OgaDestroyModel(model);
     return set_error(g_error_buffer);
   }
-  DEBUG_LOG("Step 7: Generator created successfully");
+  DEBUG_LOG("Step 7g: Generator created successfully, generator=%p",
+            (void *)generator);
 
-  // Set input tensors if we have image data
-  if (named_tensors != nullptr) {
-    DEBUG_LOG("Step 8: Setting input tensors (multimodal mode)...");
-    result = OgaGenerator_SetInputs(generator, named_tensors);
-    if (check_oga_result(result, "Setting input tensors failed")) {
-      DEBUG_ERROR("Setting input tensors failed");
-      OgaDestroyGenerator(generator);
-      OgaDestroyGeneratorParams(params);
-      OgaDestroyNamedTensors(named_tensors);
+  // Set input tensors from multimodal processor
+  DEBUG_LOG("Step 8: Setting input tensors...");
+  DEBUG_LOG("Step 8a: generator=%p, named_tensors=%p", (void *)generator, (void *)named_tensors);
+#ifdef __ANDROID__
+  // Force log flush before potentially crashing call
+  __android_log_print(ANDROID_LOG_DEBUG, "OnnxGenAI",
+                      "[DEBUG] Step 8b: About to call OgaGenerator_SetInputs...");
+#else
+  fprintf(stderr, "[OnnxGenAI] Step 8b: About to call OgaGenerator_SetInputs...\n");
+  fflush(stderr);
+#endif
+
+  result = OgaGenerator_SetInputs(generator, named_tensors);
+
+#ifdef __ANDROID__
+  __android_log_print(ANDROID_LOG_DEBUG, "OnnxGenAI",
+                      "[DEBUG] Step 8c: OgaGenerator_SetInputs returned, result=%p",
+                      (void *)result);
+#else
+  fprintf(stderr, "[OnnxGenAI] Step 8c: OgaGenerator_SetInputs returned\n");
+  fflush(stderr);
+#endif
+
+  if (check_oga_result(result, "Setting input tensors failed")) {
+    DEBUG_ERROR("Setting input tensors failed");
+    OgaDestroyGenerator(generator);
+    OgaDestroyGeneratorParams(params);
+    OgaDestroyNamedTensors(named_tensors);
+    if (images)
       OgaDestroyImages(images);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-    DEBUG_LOG("Step 8: Input tensors set successfully");
-  } else {
-    // Text-only mode: encode the prompt
-    DEBUG_LOG("Step 8: Text-only mode - encoding prompt...");
-    OgaSequences *input_sequences = nullptr;
-    result = OgaCreateSequences(&input_sequences);
-    if (check_oga_result(result, "Sequences creation failed") ||
-        input_sequences == nullptr) {
-      DEBUG_ERROR("Sequences creation failed");
-      OgaDestroyGenerator(generator);
-      OgaDestroyGeneratorParams(params);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-
-    result = OgaTokenizerEncode(tokenizer, prompt, input_sequences);
-    if (check_oga_result(result, "Tokenization failed")) {
-      DEBUG_ERROR("Tokenization failed");
-      OgaDestroySequences(input_sequences);
-      OgaDestroyGenerator(generator);
-      OgaDestroyGeneratorParams(params);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-
-    result = OgaGenerator_AppendTokenSequences(generator, input_sequences);
-    OgaDestroySequences(input_sequences);
-    if (check_oga_result(result, "Setting input sequences failed")) {
-      DEBUG_ERROR("Setting input sequences failed");
-      OgaDestroyGenerator(generator);
-      OgaDestroyGeneratorParams(params);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-    DEBUG_LOG("Step 8: Prompt encoded successfully");
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
   }
+  DEBUG_LOG("Step 8d: Input tensors set successfully");
 
   // Create tokenizer stream for incremental decoding
   DEBUG_LOG("Step 9: Creating tokenizer stream...");
@@ -631,6 +735,7 @@ FFI_PLUGIN_EXPORT const char *run_inference_multi(const char *model_path,
                                                   const char *prompt,
                                                   const char **image_paths,
                                                   int32_t image_count) {
+  init_debug_features();
   DEBUG_LOG("=== run_inference_multi START ===");
   DEBUG_LOG("model_path: %s", model_path ? model_path : "NULL");
   DEBUG_LOG("prompt length: %zu", prompt ? strlen(prompt) : 0);
@@ -717,25 +822,27 @@ FFI_PLUGIN_EXPORT const char *run_inference_multi(const char *model_path,
       return set_error(g_error_buffer);
     }
     DEBUG_LOG("Step 5: Images loaded successfully");
-
-    // Process images with prompt
-    DEBUG_LOG("Step 6: Processing images with prompt...");
-    result =
-        OgaProcessorProcessImages(processor, prompt, images, &named_tensors);
-    if (check_oga_result(result, "Image processing failed") ||
-        named_tensors == nullptr) {
-      DEBUG_ERROR("Image processing failed");
-      OgaDestroyImages(images);
-      OgaDestroyStringArray(image_path_array);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-    DEBUG_LOG("Step 6: Images processed successfully");
   } else {
-    DEBUG_LOG("Step 4-6: No images provided, skipping image processing");
+    DEBUG_LOG("Step 4-5: No images provided, will process text-only through multimodal processor");
   }
+
+  // Process through multimodal processor (required for vision models even for text-only)
+  DEBUG_LOG("Step 6: Processing prompt through multimodal processor (images=%p)...",
+            (void *)images);
+  result = OgaProcessorProcessImages(processor, prompt, images, &named_tensors);
+  if (check_oga_result(result, "Multimodal processing failed") ||
+      named_tensors == nullptr) {
+    DEBUG_ERROR("Multimodal processing failed");
+    if (images)
+      OgaDestroyImages(images);
+    if (image_path_array)
+      OgaDestroyStringArray(image_path_array);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 6: Multimodal processing completed successfully");
 
   // Create generator parameters
   DEBUG_LOG("Step 7: Creating generator params...");
@@ -755,15 +862,53 @@ FFI_PLUGIN_EXPORT const char *run_inference_multi(const char *model_path,
     OgaDestroyModel(model);
     return set_error(g_error_buffer);
   }
+  
+  // Set max_length to limit memory usage for KV-cache
+  // Use 2048 tokens - must be larger than input prompt size (~954 tokens)
+  DEBUG_LOG("Step 7a: Setting max_length to 2048 to limit memory...");
+  result = OgaGeneratorParamsSetSearchNumber(params, "max_length", 2048.0);
+  if (result != nullptr) {
+    DEBUG_ERROR("Failed to set max_length: %s", OgaResultGetError(result));
+    OgaDestroyResult(result);
+    // Non-fatal, continue anyway
+  } else {
+    DEBUG_LOG("Step 7a: max_length set successfully");
+  }
+  
   DEBUG_LOG("Step 7: Generator params created successfully");
 
-  // Create generator
-  DEBUG_LOG("Step 8: Creating generator...");
+  // Create generator - this is often where multimodal models crash
+  // due to memory allocation or model graph initialization issues
   OgaGenerator *generator = nullptr;
+  DEBUG_LOG("Step 8: Creating generator...");
+  DEBUG_LOG("Step 8a: Generator pointer address: %p", (void *)&generator);
+  DEBUG_LOG("Step 8b: Model pointer: %p", (void *)model);
+  DEBUG_LOG("Step 8c: Params pointer: %p", (void *)params);
+  DEBUG_LOG("Step 8d: named_tensors: %p, images: %p, image_count: %d",
+            (void *)named_tensors, (void *)images, image_count);
+#ifdef __ANDROID__
+  // Force log flush before potentially crashing call
+  __android_log_print(ANDROID_LOG_DEBUG, "OnnxGenAI",
+                      "[DEBUG] Step 8e: About to call OgaCreateGenerator...");
+#else
+  fprintf(stderr, "[OnnxGenAI] Step 8e: About to call OgaCreateGenerator...\n");
+  fflush(stderr);
+#endif
+
   result = OgaCreateGenerator(model, params, &generator);
+
+#ifdef __ANDROID__
+  __android_log_print(ANDROID_LOG_DEBUG, "OnnxGenAI",
+                      "[DEBUG] Step 8f: OgaCreateGenerator returned, result=%p",
+                      (void *)result);
+#else
+  fprintf(stderr, "[OnnxGenAI] Step 8f: OgaCreateGenerator returned\n");
+  fflush(stderr);
+#endif
+
   if (check_oga_result(result, "Generator creation failed") ||
       generator == nullptr) {
-    DEBUG_ERROR("Generator creation failed");
+    DEBUG_ERROR("Generator creation failed - generator=%p", (void *)generator);
     OgaDestroyGeneratorParams(params);
     if (named_tensors)
       OgaDestroyNamedTensors(named_tensors);
@@ -776,64 +921,47 @@ FFI_PLUGIN_EXPORT const char *run_inference_multi(const char *model_path,
     OgaDestroyModel(model);
     return set_error(g_error_buffer);
   }
-  DEBUG_LOG("Step 8: Generator created successfully");
+  DEBUG_LOG("Step 8g: Generator created successfully, generator=%p",
+            (void *)generator);
 
-  // Set input tensors if we have image data
-  if (named_tensors != nullptr) {
-    DEBUG_LOG("Step 9: Setting input tensors (multimodal mode)...");
-    result = OgaGenerator_SetInputs(generator, named_tensors);
-    if (check_oga_result(result, "Setting input tensors failed")) {
-      DEBUG_ERROR("Setting input tensors failed");
-      OgaDestroyGenerator(generator);
-      OgaDestroyGeneratorParams(params);
-      OgaDestroyNamedTensors(named_tensors);
+  // Set input tensors from multimodal processor
+  DEBUG_LOG("Step 9: Setting input tensors...");
+  DEBUG_LOG("Step 9a: generator=%p, named_tensors=%p", (void *)generator, (void *)named_tensors);
+#ifdef __ANDROID__
+  // Force log flush before potentially crashing call
+  __android_log_print(ANDROID_LOG_DEBUG, "OnnxGenAI",
+                      "[DEBUG] Step 9b: About to call OgaGenerator_SetInputs...");
+#else
+  fprintf(stderr, "[OnnxGenAI] Step 9b: About to call OgaGenerator_SetInputs...\n");
+  fflush(stderr);
+#endif
+
+  result = OgaGenerator_SetInputs(generator, named_tensors);
+
+#ifdef __ANDROID__
+  __android_log_print(ANDROID_LOG_DEBUG, "OnnxGenAI",
+                      "[DEBUG] Step 9c: OgaGenerator_SetInputs returned, result=%p",
+                      (void *)result);
+#else
+  fprintf(stderr, "[OnnxGenAI] Step 9c: OgaGenerator_SetInputs returned\n");
+  fflush(stderr);
+#endif
+
+  if (check_oga_result(result, "Setting input tensors failed")) {
+    DEBUG_ERROR("Setting input tensors failed");
+    OgaDestroyGenerator(generator);
+    OgaDestroyGeneratorParams(params);
+    OgaDestroyNamedTensors(named_tensors);
+    if (images)
       OgaDestroyImages(images);
+    if (image_path_array)
       OgaDestroyStringArray(image_path_array);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-    DEBUG_LOG("Step 9: Input tensors set successfully");
-  } else {
-    // Text-only mode: encode the prompt
-    DEBUG_LOG("Step 9: Text-only mode - encoding prompt...");
-    OgaSequences *input_sequences = nullptr;
-    result = OgaCreateSequences(&input_sequences);
-    if (check_oga_result(result, "Sequences creation failed") ||
-        input_sequences == nullptr) {
-      OgaDestroyGenerator(generator);
-      OgaDestroyGeneratorParams(params);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-
-    result = OgaTokenizerEncode(tokenizer, prompt, input_sequences);
-    if (check_oga_result(result, "Tokenization failed")) {
-      OgaDestroySequences(input_sequences);
-      OgaDestroyGenerator(generator);
-      OgaDestroyGeneratorParams(params);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-
-    result = OgaGenerator_AppendTokenSequences(generator, input_sequences);
-    OgaDestroySequences(input_sequences);
-    if (check_oga_result(result, "Setting input sequences failed")) {
-      DEBUG_ERROR("Setting input sequences failed");
-      OgaDestroyGenerator(generator);
-      OgaDestroyGeneratorParams(params);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-    DEBUG_LOG("Step 9: Prompt encoded successfully");
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
   }
+  DEBUG_LOG("Step 9d: Input tensors set successfully");
 
   // Create tokenizer stream for incremental decoding
   DEBUG_LOG("Step 10: Creating tokenizer stream...");

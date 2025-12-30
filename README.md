@@ -2,8 +2,21 @@
 
 A Flutter FFI plugin that wraps the Microsoft [ONNX Runtime GenAI](https://github.com/microsoft/onnxruntime-genai) C-API for on-device multimodal inference.
 
-> [!WARNING]
-> **Experimental & Untested**: This package is currently in an early experimental stage and has not been thoroughly tested. APIs may change significantly without notice.
+> [!CAUTION]
+> **⚠️ UNSTABLE & EXPERIMENTAL ⚠️**
+> 
+> This plugin is in an **early experimental stage** and is **NOT production-ready**. Use at your own risk.
+> 
+> - APIs may change significantly without notice
+> - Memory management issues may cause crashes on resource-constrained devices
+> - The KV-cache memory allocation can exceed device RAM with large `max_length` values
+> - Not all ONNX GenAI features are exposed or tested
+> - Limited testing has been done on real devices
+>
+> **Known Limitations:**
+> - Models with large context windows (e.g., 128K tokens) require configuration changes to avoid OOM crashes
+> - The `max_length` parameter in `genai_config.json` must be reduced for mobile devices (recommended: 2048 or less)
+> - Text-only inference with vision models requires processing through the multimodal pipeline
 
 ## 🤝 Contributing & Help Wanted
 

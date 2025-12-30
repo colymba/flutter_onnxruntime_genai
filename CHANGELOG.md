@@ -1,3 +1,16 @@
+## 0.1.6
+
+* Fixed multimodal text-only inference: Always process through `OgaProcessorProcessImages` even without images (required for vision models like Phi-3.5).
+* Added KV-cache memory management: Set `max_length` to 2048 tokens to prevent OOM crashes on mobile devices.
+* Added ONNX GenAI internal logging callback for better debugging.
+* Added signal handlers (SIGSEGV, SIGABRT, etc.) for crash debugging.
+* Enhanced debug logging with granular step tracking around critical API calls.
+* Fixed crash during `OgaGenerator_SetInputs` caused by prompt size exceeding `max_length`.
+
+## 0.1.5
+
+* Internal testing release.
+
 ## 0.1.4
 
 * Added comprehensive debug logging to trace native C++ execution step-by-step.
