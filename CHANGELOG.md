@@ -1,3 +1,10 @@
+## 0.1.4
+
+* Added comprehensive debug logging to trace native C++ execution step-by-step.
+* Debug logs use Android Logcat (`__android_log_print`) on Android and `stderr` on other platforms.
+* Added multi-image inference support via `run_inference_multi` and `runInferenceMultiAsync`.
+* Debug logging can be disabled by setting `ONNX_DEBUG_LOG` to `0` in `flutter_onnxruntime_genai.cpp`.
+
 ## 0.1.3
 
 * Fixed Android runtime crash: Added missing `libonnxruntime.so` dependency to jniLibs.
