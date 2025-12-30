@@ -1,3 +1,8 @@
+## 0.1.3
+
+* Fixed Android runtime crash: Added missing `libonnxruntime.so` dependency to jniLibs.
+* Updated build script to automatically copy ONNX Runtime library alongside GenAI library.
+
 ## 0.1.2
 
 * Fixed C++ API compatibility with ONNX Runtime GenAI C header.

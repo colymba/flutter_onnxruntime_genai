@@ -217,7 +217,7 @@ build_android() {
         OUTPUT_LIB_DIR="$ANDROID_OUTPUT_DIR/$ARCH"
         mkdir -p "$OUTPUT_LIB_DIR"
         
-        # Find and copy the built shared library
+        # Find and copy the built shared library (onnxruntime-genai)
         if [ -f "libonnxruntime-genai.so" ]; then
             cp "libonnxruntime-genai.so" "$OUTPUT_LIB_DIR/"
             log_info "Copied libonnxruntime-genai.so to $OUTPUT_LIB_DIR/"
@@ -227,6 +227,15 @@ build_android() {
         else
             log_warn "Could not find libonnxruntime-genai.so in build output"
             find . -name "*.so" -type f
+        fi
+        
+        # Also copy the ONNX Runtime dependency library
+        ORT_LIB_PATH="_deps/ortlib-src/runtimes/android/native/jni/$ARCH/libonnxruntime.so"
+        if [ -f "$ORT_LIB_PATH" ]; then
+            cp "$ORT_LIB_PATH" "$OUTPUT_LIB_DIR/"
+            log_info "Copied libonnxruntime.so to $OUTPUT_LIB_DIR/"
+        else
+            log_warn "Could not find libonnxruntime.so for $ARCH - genai will fail to load at runtime!"
         fi
         
         cd "$PROJECT_ROOT"
