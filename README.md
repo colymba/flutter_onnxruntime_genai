@@ -18,6 +18,14 @@ A Flutter FFI plugin that wraps the Microsoft [ONNX Runtime GenAI](https://githu
 > - The `max_length` parameter in `genai_config.json` must be reduced for mobile devices (recommended: 2048 or less)
 > - Text-only inference with vision models requires processing through the multimodal pipeline
 
+## ✅ Tested Models
+
+| Model | Device | Status | Notes |
+|-------|--------|--------|-------|
+| [Gemma 3 4B Instruct](https://huggingface.co/onnxruntime/Gemma-3-ONNX/tree/main/gemma-3-4b-it/cpu_and_mobile/cpu-int4-rtn-block-32-acc-level-4) | Pixel 8a | ✅ Working | INT4 quantized, ~1240 tokens generated successfully |
+
+> If you've tested other models, please open a PR to add them to this list!
+
 ## 🤝 Contributing & Help Wanted
 
 We are looking for help to develop and test this package! Whether you have experience with Dart FFI, ONNX Runtime, or native mobile development (Swift/Kotlin/C++), your contributions are highly welcome.

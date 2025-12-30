@@ -1,3 +1,9 @@
+## 0.2.0
+
+* **First confirmed working release!** Successfully tested on-device inference on Google Pixel 8a.
+* Tested with [Gemma 3 4B Instruct](https://huggingface.co/onnxruntime/Gemma-3-ONNX/tree/main/gemma-3-4b-it/cpu_and_mobile/cpu-int4-rtn-block-32-acc-level-4) (INT4 quantized) - generated 1240 tokens successfully.
+* Added "Tested Models" section to README documenting verified model/device combinations.
+
 ## 0.1.6
 
 * Fixed multimodal text-only inference: Always process through `OgaProcessorProcessImages` even without images (required for vision models like Phi-3.5).
