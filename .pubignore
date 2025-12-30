@@ -1,10 +1,10 @@
 # Exclude large native source code submodules
-# Keep the headers and bridge code
 native_src/
 
-# Include prebuilt binaries (stripped to stay under 100MB limit)
-!ios/Frameworks/
-!android/src/main/jniLibs/
+# Exclude simulator/emulator libraries to reduce package size under 100MB
+# Users can build these locally if needed for simulator/emulator testing
+android/src/main/jniLibs/x86_64/
+ios/Frameworks/onnxruntime-genai.xcframework/ios-arm64_x86_64-simulator/
 
 # Exclude build artifacts
 build/

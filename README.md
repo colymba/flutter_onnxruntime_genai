@@ -39,12 +39,21 @@ If you'd like to help, please:
 
 - Flutter 3.3.0+
 - Dart SDK 3.10.4+
-- Android: API 24+ (NDK for building)
-- iOS: 13.0+ (Xcode for building)
+- Android: API 24+ (NDK for building), **arm64 device only** (x86_64 emulator not included in pub.dev package)
+- iOS: 13.0+ (Xcode for building), **device only** (simulator not included in pub.dev package)
+
+> **Note**: The pub.dev package only includes device libraries (Android arm64, iOS arm64) to stay under size limits. For simulator/emulator testing, build from source using the instructions below.
 
 ## Installation
 
 ### 1. Add Dependency
+
+```yaml
+dependencies:
+  flutter_onnxruntime_genai: ^0.1.6
+```
+
+Or from Git for the latest development version:
 
 ```yaml
 dependencies:
@@ -53,7 +62,7 @@ dependencies:
       url: https://github.com/colymba/flutter_onnxruntime_genai.git
 ```
 
-### 2. Set Up ONNX Runtime GenAI Submodule
+### 2. Set Up ONNX Runtime GenAI Submodule (Optional - for building from source)
 
 ```bash
 cd flutter_onnxruntime_genai
