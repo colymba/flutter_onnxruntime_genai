@@ -51,6 +51,22 @@ typedef RunTextInferenceDart =
       int maxLength,
     );
 
+/// Native function: const char* run_inference_multi(const char* model_path, const char* prompt, const char** image_paths, int32_t image_count)
+typedef RunInferenceMultiNative =
+    Pointer<Utf8> Function(
+      Pointer<Utf8> modelPath,
+      Pointer<Utf8> prompt,
+      Pointer<Pointer<Utf8>> imagePaths,
+      Int32 imageCount,
+    );
+typedef RunInferenceMultiDart =
+    Pointer<Utf8> Function(
+      Pointer<Utf8> modelPath,
+      Pointer<Utf8> prompt,
+      Pointer<Pointer<Utf8>> imagePaths,
+      int imageCount,
+    );
+
 /// Native function: const char* get_library_version()
 typedef GetLibraryVersionNative = Pointer<Utf8> Function();
 typedef GetLibraryVersionDart = Pointer<Utf8> Function();
@@ -137,6 +153,7 @@ class OnnxGenAI {
   // Bound native functions
   late final CheckNativeHealthDart _checkNativeHealth;
   late final RunInferenceDart _runInference;
+  late final RunInferenceMultiDart _runInferenceMulti;
   late final RunTextInferenceDart _runTextInference;
   late final GetLibraryVersionDart _getLibraryVersion;
   late final ShutdownOnnxGenAIDart _shutdownOnnxGenAI;
@@ -175,6 +192,10 @@ class OnnxGenAI {
     _runInference = _dylib
         .lookup<NativeFunction<RunInferenceNative>>('run_inference')
         .asFunction<RunInferenceDart>();
+
+    _runInferenceMulti = _dylib
+        .lookup<NativeFunction<RunInferenceMultiNative>>('run_inference_multi')
+        .asFunction<RunInferenceMultiDart>();
 
     _runTextInference = _dylib
         .lookup<NativeFunction<RunTextInferenceNative>>('run_text_inference')
@@ -253,6 +274,58 @@ class OnnxGenAI {
     }
   }
 
+  /// Runs multimodal inference with text and multiple images.
+  ///
+  /// WARNING: This is a LONG-RUNNING, BLOCKING operation!
+  /// DO NOT call from the main UI isolate. Use [runInferenceMultiAsync] instead.
+  ///
+  /// Parameters:
+  /// - [modelPath]: Path to the ONNX GenAI model directory.
+  /// - [prompt]: Text prompt for generation (should contain <|image_N|> placeholders).
+  /// - [imagePaths]: List of paths to image files.
+  ///
+  /// Returns the generated text, or throws [OnnxGenAIException] on error.
+  String runInferenceMulti({
+    required String modelPath,
+    required String prompt,
+    required List<String> imagePaths,
+  }) {
+    final modelPathPtr = modelPath.toNativeUtf8();
+    final promptPtr = prompt.toNativeUtf8();
+
+    // Allocate array of pointers for image paths
+    final imagePathPtrs = calloc<Pointer<Utf8>>(imagePaths.length);
+    for (int i = 0; i < imagePaths.length; i++) {
+      imagePathPtrs[i] = imagePaths[i].toNativeUtf8();
+    }
+
+    try {
+      final resultPtr = _runInferenceMulti(
+        modelPathPtr,
+        promptPtr,
+        imagePathPtrs,
+        imagePaths.length,
+      );
+      final result = resultPtr.toDartString();
+
+      // Check for error prefix
+      if (result.startsWith('ERROR:')) {
+        throw OnnxGenAIException(result.substring(6).trim());
+      }
+
+      return result;
+    } finally {
+      calloc.free(modelPathPtr);
+      calloc.free(promptPtr);
+      // Free each image path string
+      for (int i = 0; i < imagePaths.length; i++) {
+        calloc.free(imagePathPtrs[i]);
+      }
+      // Free the array of pointers
+      calloc.free(imagePathPtrs);
+    }
+  }
+
   /// Runs text-only inference.
   ///
   /// WARNING: This is a LONG-RUNNING, BLOCKING operation!
@@ -320,6 +393,31 @@ class OnnxGenAI {
         modelPath: modelPath,
         prompt: prompt,
         imagePath: imagePath,
+      );
+    });
+  }
+
+  /// Runs multimodal inference with multiple images asynchronously.
+  ///
+  /// This is the recommended method for calling from the main UI isolate.
+  ///
+  /// Parameters:
+  /// - [modelPath]: Path to the ONNX GenAI model directory.
+  /// - [prompt]: Text prompt for generation (should contain <|image_N|> placeholders).
+  /// - [imagePaths]: List of paths to image files.
+  ///
+  /// Returns a [Future] that completes with the generated text.
+  Future<String> runInferenceMultiAsync({
+    required String modelPath,
+    required String prompt,
+    required List<String> imagePaths,
+  }) async {
+    return Isolate.run(() {
+      final onnx = OnnxGenAI();
+      return onnx.runInferenceMulti(
+        modelPath: modelPath,
+        prompt: prompt,
+        imagePaths: imagePaths,
       );
     });
   }

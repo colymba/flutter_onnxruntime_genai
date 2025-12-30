@@ -477,6 +477,252 @@ FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
 }
 
 /**
+ * @brief Run multimodal inference with text and multiple images.
+ *
+ * This function is designed for vision-language models like Phi-3.5 Vision.
+ * It processes the text prompt along with multiple images for generation.
+ * The prompt should contain image placeholders like <|image_1|>, <|image_2|>,
+ * etc. matching the number of images provided.
+ *
+ * WARNING: This is a long-running operation! Call from a background Isolate
+ * only.
+ *
+ * @param model_path Path to the ONNX GenAI model directory
+ * @param prompt The text prompt for generation (with image placeholders)
+ * @param image_paths Array of paths to image files
+ * @param image_count Number of images in the array
+ * @return Generated text on success, error message starting with "ERROR:" on
+ * failure
+ */
+FFI_PLUGIN_EXPORT const char *run_inference_multi(const char *model_path,
+                                                  const char *prompt,
+                                                  const char **image_paths,
+                                                  int32_t image_count) {
+  if (model_path == nullptr || prompt == nullptr) {
+    return set_error("NULL model_path or prompt provided");
+  }
+
+  if (image_count > 0 && image_paths == nullptr) {
+    return set_error("image_paths is NULL but image_count > 0");
+  }
+
+  // Create model
+  OgaModel *model = nullptr;
+  OgaResult *result = OgaCreateModel(model_path, &model);
+  if (check_oga_result(result, "Model creation failed") || model == nullptr) {
+    return set_error(g_error_buffer);
+  }
+
+  // Create multimodal processor
+  OgaMultiModalProcessor *processor = nullptr;
+  result = OgaCreateMultiModalProcessor(model, &processor);
+  if (check_oga_result(result, "MultiModal processor creation failed") ||
+      processor == nullptr) {
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+
+  // Create tokenizer from model
+  OgaTokenizer *tokenizer = nullptr;
+  result = OgaCreateTokenizer(model, &tokenizer);
+  if (check_oga_result(result, "Tokenizer creation failed") ||
+      tokenizer == nullptr) {
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+
+  // Load images if provided
+  OgaImages *images = nullptr;
+  OgaNamedTensors *named_tensors = nullptr;
+  OgaStringArray *image_path_array = nullptr;
+
+  if (image_count > 0) {
+    // Create string array from image paths
+    result = OgaCreateStringArrayFromStrings(image_paths,
+                                             static_cast<size_t>(image_count),
+                                             &image_path_array);
+    if (check_oga_result(result, "String array creation failed") ||
+        image_path_array == nullptr) {
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+
+    // Load all images
+    result = OgaLoadImages(image_path_array, &images);
+    if (check_oga_result(result, "Image loading failed") || images == nullptr) {
+      OgaDestroyStringArray(image_path_array);
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+
+    // Process images with prompt
+    result =
+        OgaProcessorProcessImages(processor, prompt, images, &named_tensors);
+    if (check_oga_result(result, "Image processing failed") ||
+        named_tensors == nullptr) {
+      OgaDestroyImages(images);
+      OgaDestroyStringArray(image_path_array);
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+  }
+
+  // Create generator parameters
+  OgaGeneratorParams *params = nullptr;
+  result = OgaCreateGeneratorParams(model, &params);
+  if (check_oga_result(result, "Generator params creation failed") ||
+      params == nullptr) {
+    if (named_tensors)
+      OgaDestroyNamedTensors(named_tensors);
+    if (images)
+      OgaDestroyImages(images);
+    if (image_path_array)
+      OgaDestroyStringArray(image_path_array);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+
+  // Create generator
+  OgaGenerator *generator = nullptr;
+  result = OgaCreateGenerator(model, params, &generator);
+  if (check_oga_result(result, "Generator creation failed") ||
+      generator == nullptr) {
+    OgaDestroyGeneratorParams(params);
+    if (named_tensors)
+      OgaDestroyNamedTensors(named_tensors);
+    if (images)
+      OgaDestroyImages(images);
+    if (image_path_array)
+      OgaDestroyStringArray(image_path_array);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+
+  // Set input tensors if we have image data
+  if (named_tensors != nullptr) {
+    result = OgaGenerator_SetInputs(generator, named_tensors);
+    if (check_oga_result(result, "Setting input tensors failed")) {
+      OgaDestroyGenerator(generator);
+      OgaDestroyGeneratorParams(params);
+      OgaDestroyNamedTensors(named_tensors);
+      OgaDestroyImages(images);
+      OgaDestroyStringArray(image_path_array);
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+  } else {
+    // Text-only mode: encode the prompt
+    OgaSequences *input_sequences = nullptr;
+    result = OgaCreateSequences(&input_sequences);
+    if (check_oga_result(result, "Sequences creation failed") ||
+        input_sequences == nullptr) {
+      OgaDestroyGenerator(generator);
+      OgaDestroyGeneratorParams(params);
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+
+    result = OgaTokenizerEncode(tokenizer, prompt, input_sequences);
+    if (check_oga_result(result, "Tokenization failed")) {
+      OgaDestroySequences(input_sequences);
+      OgaDestroyGenerator(generator);
+      OgaDestroyGeneratorParams(params);
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+
+    result = OgaGenerator_AppendTokenSequences(generator, input_sequences);
+    OgaDestroySequences(input_sequences);
+    if (check_oga_result(result, "Setting input sequences failed")) {
+      OgaDestroyGenerator(generator);
+      OgaDestroyGeneratorParams(params);
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+  }
+
+  // Create tokenizer stream for incremental decoding
+  OgaTokenizerStream *stream = nullptr;
+  result = OgaCreateTokenizerStream(tokenizer, &stream);
+  if (check_oga_result(result, "Tokenizer stream creation failed") ||
+      stream == nullptr) {
+    OgaDestroyGenerator(generator);
+    OgaDestroyGeneratorParams(params);
+    if (named_tensors)
+      OgaDestroyNamedTensors(named_tensors);
+    if (images)
+      OgaDestroyImages(images);
+    if (image_path_array)
+      OgaDestroyStringArray(image_path_array);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+
+  // Generate tokens
+  std::string generated_text;
+  while (!OgaGenerator_IsDone(generator)) {
+    result = OgaGenerator_GenerateNextToken(generator);
+    if (check_oga_result(result, "Generate next token failed")) {
+      break;
+    }
+
+    // Get the last generated tokens
+    const int32_t *tokens = nullptr;
+    size_t token_count = 0;
+    result = OgaGenerator_GetNextTokens(generator, &tokens, &token_count);
+    if (check_oga_result(result, "Get next tokens failed") ||
+        token_count == 0) {
+      break;
+    }
+
+    // Decode first token to text (batch size = 1)
+    const char *token_text = nullptr;
+    result = OgaTokenizerStreamDecode(stream, tokens[0], &token_text);
+    if (!check_oga_result(result, "Token decode failed") &&
+        token_text != nullptr) {
+      generated_text += token_text;
+    }
+  }
+
+  // Cleanup
+  OgaDestroyTokenizerStream(stream);
+  OgaDestroyGenerator(generator);
+  OgaDestroyGeneratorParams(params);
+  if (named_tensors)
+    OgaDestroyNamedTensors(named_tensors);
+  if (images)
+    OgaDestroyImages(images);
+  if (image_path_array)
+    OgaDestroyStringArray(image_path_array);
+  OgaDestroyTokenizer(tokenizer);
+  OgaDestroyMultiModalProcessor(processor);
+  OgaDestroyModel(model);
+
+  return set_result(generated_text);
+}
+
+/**
  * @brief Free any global resources held by the library.
  *
  * Call this when the application is shutting down or when the plugin

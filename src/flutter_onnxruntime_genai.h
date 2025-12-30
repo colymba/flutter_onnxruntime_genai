@@ -85,6 +85,29 @@ FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
                                             const char *image_path);
 
 /**
+ * @brief Run multimodal inference with text and multiple images.
+ *
+ * This function is designed for vision-language models like Phi-3.5 Vision.
+ * It processes the text prompt along with multiple images for generation.
+ * The prompt should contain image placeholders like <|image_1|>, <|image_2|>, etc.
+ * matching the number of images provided.
+ *
+ * WARNING: This is a LONG-RUNNING operation!
+ * MUST be called from a background Dart Isolate, NOT the main UI isolate.
+ *
+ * @param model_path Path to the ONNX GenAI model directory
+ * @param prompt The text prompt for generation (with image placeholders)
+ * @param image_paths Array of paths to image files (JPEG, PNG, etc.)
+ * @param image_count Number of images in the array
+ * @return Generated text on success, or error message prefixed with "ERROR:" on
+ * failure
+ */
+FFI_PLUGIN_EXPORT const char *run_inference_multi(const char *model_path,
+                                                  const char *prompt,
+                                                  const char **image_paths,
+                                                  int32_t image_count);
+
+/**
  * @brief Run text-only inference with the model.
  *
  * A simplified version of run_inference for text-only generation.
