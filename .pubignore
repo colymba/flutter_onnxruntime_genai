@@ -1,10 +1,10 @@
-# Exclude large native source code and submodules
+# Exclude large native source code submodules
+# Keep the headers and bridge code
 native_src/
-ios/Frameworks/
-android/src/main/jniLibs/
 
-# Exclude scripts (optional, but keep them if they are useful for the user)
-# scripts/
+# Include prebuilt binaries (stripped to stay under 100MB limit)
+!ios/Frameworks/
+!android/src/main/jniLibs/
 
 # Exclude build artifacts
 build/
@@ -14,3 +14,5 @@ pubspec.lock
 
 # Exclude OS-specific files
 .DS_Store
+*.swp
+*.log

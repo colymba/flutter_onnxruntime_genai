@@ -1,7 +1,7 @@
 name: flutter_onnxruntime_genai
 description: >
   A Flutter FFI plugin wrapping Microsoft ONNX Runtime GenAI C-API for on-device multimodal inference on Android and iOS devices.
-version: 0.1.0
+version: 0.1.1
 homepage: https://github.com/colymba/flutter_onnxruntime_genai
 repository: https://github.com/colymba/flutter_onnxruntime_genai
 issue_tracker: https://github.com/colymba/flutter_onnxruntime_genai/issues
@@ -32,15 +32,10 @@ flutter:
       ios:
         ffiPlugin: true
 
-# Topics for pub.dev discoverability
+# Topics (5 max) for pub.dev discoverability
 topics:
-  - machine-learning
   - onnx
   - ai
-  - ffi
-  - vision
   - genai
   - onnxruntime
   - onnxruntime-genai
-  - multimodal
-  - inference

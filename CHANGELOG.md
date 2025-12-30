@@ -1,3 +1,9 @@
+## 0.1.1
+
+* Include prebuilt stripped native libraries for Android and iOS.
+* Reduced package size for pub.dev compatibility.
+* Updated documentation.
+
 ## 0.1.0
 
 * Initial experimental release.

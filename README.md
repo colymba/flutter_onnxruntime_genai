@@ -48,15 +48,13 @@ git submodule add https://github.com/microsoft/onnxruntime-genai.git native_src/
 git submodule update --init --recursive
 ```
 
-### 3. Build Native Libraries
+### 3. Build Native Libraries (Optional)
+
+Prebuilt binaries for Android (arm64, x86_64) and iOS (Device & Simulator) are included in the package. You only need to build from source if you want to customize the build or use a different version:
 
 ```bash
 ./scripts/build_onnx_libs.sh all
 ```
-
-This builds:
-- **Android**: `libonnxruntime-genai.so` for arm64-v8a and x86_64 (with 16KB page alignment for Android 15+)
-- **iOS**: `onnxruntime-genai.xcframework` with device and simulator support
 
 ## Usage
 
