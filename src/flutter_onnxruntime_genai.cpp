@@ -157,11 +157,19 @@ FFI_PLUGIN_EXPORT const char *run_text_inference(const char *model_path,
     return set_error(g_error_buffer);
   }
 
-  // Encode the prompt
+  // Create sequences container first, then encode the prompt
   OgaSequences *input_sequences = nullptr;
-  result = OgaTokenizerEncode(tokenizer, prompt, &input_sequences);
-  if (check_oga_result(result, "Tokenization failed") ||
+  result = OgaCreateSequences(&input_sequences);
+  if (check_oga_result(result, "Sequences creation failed") ||
       input_sequences == nullptr) {
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+
+  result = OgaTokenizerEncode(tokenizer, prompt, input_sequences);
+  if (check_oga_result(result, "Tokenization failed")) {
+    OgaDestroySequences(input_sequences);
     OgaDestroyTokenizer(tokenizer);
     OgaDestroyModel(model);
     return set_error(g_error_buffer);
@@ -184,9 +192,11 @@ FFI_PLUGIN_EXPORT const char *run_text_inference(const char *model_path,
                                       static_cast<double>(max_length));
   }
 
-  // Set input sequences
-  result = OgaGeneratorParamsSetInputSequences(params, input_sequences);
-  if (check_oga_result(result, "Setting input sequences failed")) {
+  // Create generator
+  OgaGenerator *generator = nullptr;
+  result = OgaCreateGenerator(model, params, &generator);
+  if (check_oga_result(result, "Generator creation failed") ||
+      generator == nullptr) {
     OgaDestroyGeneratorParams(params);
     OgaDestroySequences(input_sequences);
     OgaDestroyTokenizer(tokenizer);
@@ -194,11 +204,10 @@ FFI_PLUGIN_EXPORT const char *run_text_inference(const char *model_path,
     return set_error(g_error_buffer);
   }
 
-  // Create generator
-  OgaGenerator *generator = nullptr;
-  result = OgaCreateGenerator(model, params, &generator);
-  if (check_oga_result(result, "Generator creation failed") ||
-      generator == nullptr) {
+  // Append input sequences to generator
+  result = OgaGenerator_AppendTokenSequences(generator, input_sequences);
+  if (check_oga_result(result, "Setting input sequences failed")) {
+    OgaDestroyGenerator(generator);
     OgaDestroyGeneratorParams(params);
     OgaDestroySequences(input_sequences);
     OgaDestroyTokenizer(tokenizer);
@@ -221,22 +230,22 @@ FFI_PLUGIN_EXPORT const char *run_text_inference(const char *model_path,
   }
 
   while (!OgaGenerator_IsDone(generator)) {
-    result = OgaGenerator_ComputeLogits(generator);
-    if (check_oga_result(result, "Compute logits failed")) {
-      break;
-    }
-
     result = OgaGenerator_GenerateNextToken(generator);
     if (check_oga_result(result, "Generate next token failed")) {
       break;
     }
 
-    // Get the last generated token
-    int32_t token = OgaGenerator_GetLastToken(generator, 0);
+    // Get the last generated tokens
+    const int32_t *tokens = nullptr;
+    size_t token_count = 0;
+    result = OgaGenerator_GetNextTokens(generator, &tokens, &token_count);
+    if (check_oga_result(result, "Get next tokens failed") || token_count == 0) {
+      break;
+    }
 
-    // Decode token to text
+    // Decode first token to text (batch size = 1)
     const char *token_text = nullptr;
-    result = OgaTokenizerStreamDecode(stream, token, &token_text);
+    result = OgaTokenizerStreamDecode(stream, tokens[0], &token_text);
     if (!check_oga_result(result, "Token decode failed") &&
         token_text != nullptr) {
       generated_text += token_text;
@@ -293,9 +302,9 @@ FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
     return set_error(g_error_buffer);
   }
 
-  // Create tokenizer from processor
+  // Create tokenizer from model
   OgaTokenizer *tokenizer = nullptr;
-  result = OgaMultiModalProcessorCreateTokenizer(processor, &tokenizer);
+  result = OgaCreateTokenizer(model, &tokenizer);
   if (check_oga_result(result, "Tokenizer creation failed") ||
       tokenizer == nullptr) {
     OgaDestroyMultiModalProcessor(processor);
@@ -317,8 +326,8 @@ FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
     }
 
     // Process images with prompt
-    result = OgaMultiModalProcessorProcessImages(processor, prompt, images,
-                                                 &named_tensors);
+    result = OgaProcessorProcessImages(processor, prompt, images,
+                                       &named_tensors);
     if (check_oga_result(result, "Image processing failed") ||
         named_tensors == nullptr) {
       OgaDestroyImages(images);
@@ -344,42 +353,6 @@ FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
     return set_error(g_error_buffer);
   }
 
-  // Set input tensors if we have image data
-  if (named_tensors != nullptr) {
-    result = OgaGeneratorParamsSetInputs(params, named_tensors);
-    if (check_oga_result(result, "Setting input tensors failed")) {
-      OgaDestroyGeneratorParams(params);
-      OgaDestroyNamedTensors(named_tensors);
-      OgaDestroyImages(images);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-  } else {
-    // Text-only mode: encode the prompt
-    OgaSequences *input_sequences = nullptr;
-    result = OgaTokenizerEncode(tokenizer, prompt, &input_sequences);
-    if (check_oga_result(result, "Tokenization failed") ||
-        input_sequences == nullptr) {
-      OgaDestroyGeneratorParams(params);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-
-    result = OgaGeneratorParamsSetInputSequences(params, input_sequences);
-    OgaDestroySequences(input_sequences);
-    if (check_oga_result(result, "Setting input sequences failed")) {
-      OgaDestroyGeneratorParams(params);
-      OgaDestroyTokenizer(tokenizer);
-      OgaDestroyMultiModalProcessor(processor);
-      OgaDestroyModel(model);
-      return set_error(g_error_buffer);
-    }
-  }
-
   // Create generator
   OgaGenerator *generator = nullptr;
   result = OgaCreateGenerator(model, params, &generator);
@@ -394,6 +367,56 @@ FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
     OgaDestroyMultiModalProcessor(processor);
     OgaDestroyModel(model);
     return set_error(g_error_buffer);
+  }
+
+  // Set input tensors if we have image data
+  if (named_tensors != nullptr) {
+    result = OgaGenerator_SetInputs(generator, named_tensors);
+    if (check_oga_result(result, "Setting input tensors failed")) {
+      OgaDestroyGenerator(generator);
+      OgaDestroyGeneratorParams(params);
+      OgaDestroyNamedTensors(named_tensors);
+      OgaDestroyImages(images);
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+  } else {
+    // Text-only mode: encode the prompt
+    OgaSequences *input_sequences = nullptr;
+    result = OgaCreateSequences(&input_sequences);
+    if (check_oga_result(result, "Sequences creation failed") ||
+        input_sequences == nullptr) {
+      OgaDestroyGenerator(generator);
+      OgaDestroyGeneratorParams(params);
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+
+    result = OgaTokenizerEncode(tokenizer, prompt, input_sequences);
+    if (check_oga_result(result, "Tokenization failed")) {
+      OgaDestroySequences(input_sequences);
+      OgaDestroyGenerator(generator);
+      OgaDestroyGeneratorParams(params);
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+
+    result = OgaGenerator_AppendTokenSequences(generator, input_sequences);
+    OgaDestroySequences(input_sequences);
+    if (check_oga_result(result, "Setting input sequences failed")) {
+      OgaDestroyGenerator(generator);
+      OgaDestroyGeneratorParams(params);
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
   }
 
   // Create tokenizer stream for incremental decoding
@@ -416,22 +439,22 @@ FFI_PLUGIN_EXPORT const char *run_inference(const char *model_path,
   // Generate tokens
   std::string generated_text;
   while (!OgaGenerator_IsDone(generator)) {
-    result = OgaGenerator_ComputeLogits(generator);
-    if (check_oga_result(result, "Compute logits failed")) {
-      break;
-    }
-
     result = OgaGenerator_GenerateNextToken(generator);
     if (check_oga_result(result, "Generate next token failed")) {
       break;
     }
 
-    // Get the last generated token
-    int32_t token = OgaGenerator_GetLastToken(generator, 0);
+    // Get the last generated tokens
+    const int32_t *tokens = nullptr;
+    size_t token_count = 0;
+    result = OgaGenerator_GetNextTokens(generator, &tokens, &token_count);
+    if (check_oga_result(result, "Get next tokens failed") || token_count == 0) {
+      break;
+    }
 
-    // Decode token to text
+    // Decode first token to text (batch size = 1)
     const char *token_text = nullptr;
-    result = OgaTokenizerStreamDecode(stream, token, &token_text);
+    result = OgaTokenizerStreamDecode(stream, tokens[0], &token_text);
     if (!check_oga_result(result, "Token decode failed") &&
         token_text != nullptr) {
       generated_text += token_text;

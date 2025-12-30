@@ -1,3 +1,13 @@
+## 0.1.2
+
+* Fixed C++ API compatibility with ONNX Runtime GenAI C header.
+* Updated `OgaTokenizerEncode` to use pre-created sequences.
+* Replaced deprecated `OgaGeneratorParamsSetInputSequences` with `OgaGenerator_AppendTokenSequences`.
+* Replaced non-existent `OgaGenerator_ComputeLogits` - using `OgaGenerator_GenerateNextToken` directly.
+* Replaced `OgaGenerator_GetLastToken` with `OgaGenerator_GetNextTokens`.
+* Fixed `OgaProcessorProcessImages` function name.
+* Fixed `OgaGenerator_SetInputs` to be called on generator instead of params.
+
 ## 0.1.1
 
 * Include prebuilt stripped native libraries for Android and iOS.
