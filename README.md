@@ -178,6 +178,18 @@ All synchronous inference methods (`runInference`, `runTextInference`) are **blo
 
 The build script and CMake configuration include the critical 16KB page alignment flag (`-Wl,-z,max-page-size=16384`) for Android 15+ compatibility.
 
+### Debug Logging
+
+The native C++ code includes comprehensive step-by-step debug logging for troubleshooting. Logs are output to:
+- **Android**: Logcat with tag `OnnxGenAI` (use `adb logcat -s OnnxGenAI:*`)
+- **iOS/Desktop**: stderr
+
+To **disable** debug logging in production builds, edit `src/flutter_onnxruntime_genai.cpp` and set:
+
+```cpp
+#define ONNX_DEBUG_LOG 0
+```
+
 ### Model Files
 
 ONNX GenAI models must be present on the device before inference. The model directory should contain:
