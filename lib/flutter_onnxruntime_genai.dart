@@ -50,4 +50,9 @@
 library;
 
 export 'src/ffi_bindings.dart'
-    show OnnxGenAI, OnnxGenAIStreamer, OnnxGenAIException, HealthStatus;
+    show
+        OnnxGenAI,
+        OnnxGenAIStreamer,
+        OnnxGenAIException,
+        HealthStatus,
+        OnnxGenAIConfig;

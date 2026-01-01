@@ -12,6 +12,7 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:ffi/ffi.dart';
 
@@ -1066,4 +1067,223 @@ class OnnxGenAIException implements Exception {
 
   @override
   String toString() => 'OnnxGenAIException: $message';
+}
+
+// =============================================================================
+// Model Configuration Utility
+// =============================================================================
+
+/// Utility class for reading and modifying genai_config.json files.
+///
+/// Since ONNX Runtime GenAI's runtime API only supports execution provider
+/// configuration, session options like thread counts and memory settings
+/// must be configured by modifying the genai_config.json file directly.
+///
+/// Example:
+/// ```dart
+/// final configUtil = OnnxGenAIConfig(modelPath);
+///
+/// // Optimize for mobile
+/// await configUtil.optimizeForMobile(
+///   maxLength: 2048,
+///   contextLength: 4096,
+///   intraOpThreads: 4,
+/// );
+///
+/// // Or update individual settings
+/// await configUtil.update({
+///   'search.max_length': 2048,
+///   'model.decoder.session_options.intra_op_num_threads': 4,
+/// });
+/// ```
+class OnnxGenAIConfig {
+  /// Path to the model directory containing genai_config.json.
+  final String modelPath;
+
+  /// Creates a config utility for the given model path.
+  OnnxGenAIConfig(this.modelPath);
+
+  /// Path to the genai_config.json file.
+  String get configFilePath => '$modelPath/genai_config.json';
+
+  /// Path to the backup config file (factory settings).
+  String get backupFilePath => '$modelPath/genai_config.json.back';
+
+  /// Checks if a factory backup exists.
+  Future<bool> hasFactoryBackup() async {
+    return File(backupFilePath).exists();
+  }
+
+  /// Creates a backup of the current config as factory settings.
+  ///
+  /// Only creates the backup if it doesn't already exist, preserving
+  /// the original "factory" configuration.
+  ///
+  /// Returns true if backup was created, false if it already existed.
+  Future<bool> backupFactoryConfig() async {
+    final backupFile = File(backupFilePath);
+    if (await backupFile.exists()) {
+      return false; // Backup already exists, don't overwrite
+    }
+
+    final configFile = File(configFilePath);
+    if (!await configFile.exists()) {
+      throw OnnxGenAIException('Config file not found: $configFilePath');
+    }
+
+    await configFile.copy(backupFilePath);
+    return true;
+  }
+
+  /// Restores the factory configuration from backup.
+  ///
+  /// Throws [OnnxGenAIException] if no backup exists.
+  ///
+  /// Returns the restored configuration.
+  Future<Map<String, dynamic>> restoreFactoryConfig() async {
+    final backupFile = File(backupFilePath);
+    if (!await backupFile.exists()) {
+      throw OnnxGenAIException('No factory backup found at: $backupFilePath');
+    }
+
+    // Copy backup back to main config
+    await backupFile.copy(configFilePath);
+
+    // Return the restored config
+    return read();
+  }
+
+  /// Reads and returns the current configuration as a Map.
+  Future<Map<String, dynamic>> read() async {
+    final file = File(configFilePath);
+    if (!await file.exists()) {
+      throw OnnxGenAIException('Config file not found: $configFilePath');
+    }
+    final content = await file.readAsString();
+    return Map<String, dynamic>.from(
+      const JsonDecoder().convert(content) as Map,
+    );
+  }
+
+  /// Writes the configuration map to the file.
+  ///
+  /// Automatically creates a factory backup before the first write
+  /// if one doesn't already exist.
+  Future<void> write(Map<String, dynamic> config) async {
+    // Backup factory config before first modification
+    await backupFactoryConfig();
+
+    final file = File(configFilePath);
+    final encoder = const JsonEncoder.withIndent('    ');
+    await file.writeAsString(encoder.convert(config));
+  }
+
+  /// Updates specific configuration values using dot-notation keys.
+  ///
+  /// Example keys:
+  /// - `'search.max_length'` → sets `config['search']['max_length']`
+  /// - `'model.context_length'` → sets `config['model']['context_length']`
+  /// - `'model.decoder.session_options.intra_op_num_threads'`
+  ///
+  /// Returns the updated configuration.
+  Future<Map<String, dynamic>> update(Map<String, dynamic> updates) async {
+    final config = await read();
+
+    for (final entry in updates.entries) {
+      _setNestedValue(config, entry.key.split('.'), entry.value);
+    }
+
+    await write(config);
+    return config;
+  }
+
+  /// Gets a specific value using dot-notation key.
+  Future<dynamic> get(String key) async {
+    final config = await read();
+    return _getNestedValue(config, key.split('.'));
+  }
+
+  /// Applies mobile-optimized settings to reduce memory usage and improve speed.
+  ///
+  /// Parameters:
+  /// - [maxLength]: Maximum tokens to generate (default: 2048)
+  /// - [contextLength]: Maximum context window (default: 4096)
+  /// - [intraOpThreads]: Threads within an operation (default: 4)
+  /// - [interOpThreads]: Threads between operations (default: 1)
+  /// - [pastPresentShareBuffer]: Reuse KV-cache buffers (default: true)
+  /// - [doSample]: Use sampling vs greedy decoding (default: false for speed)
+  ///
+  /// Returns the updated configuration.
+  Future<Map<String, dynamic>> optimizeForMobile({
+    int maxLength = 2048,
+    int contextLength = 4096,
+    int intraOpThreads = 4,
+    int interOpThreads = 1,
+    bool pastPresentShareBuffer = true,
+    bool doSample = false,
+  }) async {
+    return update({
+      'model.context_length': contextLength,
+      'model.decoder.session_options.intra_op_num_threads': intraOpThreads,
+      'model.decoder.session_options.inter_op_num_threads': interOpThreads,
+      'search.max_length': maxLength,
+      'search.past_present_share_buffer': pastPresentShareBuffer,
+      'search.do_sample': doSample,
+    });
+  }
+
+  /// Resets configuration to hardcoded default values.
+  ///
+  /// Use [restoreFactoryConfig] instead to restore the original model settings.
+  ///
+  /// @deprecated Prefer [restoreFactoryConfig] which restores the actual
+  /// original configuration from backup.
+  Future<Map<String, dynamic>> resetToDefaults({
+    int maxLength = 131072,
+    int contextLength = 131072,
+  }) async {
+    return update({
+      'model.context_length': contextLength,
+      'search.max_length': maxLength,
+      'search.past_present_share_buffer': false,
+      'search.do_sample': true,
+    });
+  }
+
+  /// Sets a nested value in a map using a path of keys.
+  void _setNestedValue(
+    Map<String, dynamic> map,
+    List<String> path,
+    dynamic value,
+  ) {
+    if (path.isEmpty) return;
+
+    if (path.length == 1) {
+      map[path.first] = value;
+      return;
+    }
+
+    final key = path.first;
+    if (!map.containsKey(key) || map[key] is! Map) {
+      map[key] = <String, dynamic>{};
+    }
+
+    _setNestedValue(map[key] as Map<String, dynamic>, path.sublist(1), value);
+  }
+
+  /// Gets a nested value from a map using a path of keys.
+  dynamic _getNestedValue(Map<String, dynamic> map, List<String> path) {
+    if (path.isEmpty) return null;
+
+    final key = path.first;
+    if (!map.containsKey(key)) return null;
+
+    if (path.length == 1) {
+      return map[key];
+    }
+
+    if (map[key] is! Map) return null;
+
+    return _getNestedValue(map[key] as Map<String, dynamic>, path.sublist(1));
+  }
 }

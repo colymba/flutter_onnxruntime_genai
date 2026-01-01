@@ -9,6 +9,7 @@
 * Added `runInferenceMultiWithConfig()` for synchronous multi-image inference with custom config.
 * Added `runInferenceMultiWithConfigAsync()` - **recommended** async method for multi-image with config.
 * Added `getLastError()` for detailed error messages from native layer.
+* Added `OnnxGenAIConfig` utility class for modifying `genai_config.json` (session options, max_length, etc.)
 
 ### Example Usage
 
