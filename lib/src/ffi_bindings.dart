@@ -1402,6 +1402,11 @@ class OnnxGenAIConfig {
   /// - [doSample]: Use sampling vs greedy decoding (default: false for speed)
   ///
   /// Returns the updated configuration.
+  ///
+  /// **v0.4.1:** Now includes high-priority ONNX Runtime optimizations:
+  /// - ARM64 bfloat16 GEMM fast math (+13% speed on Tensor G3)
+  /// - Denormal-as-zero for faster float ops
+  /// - Thread spinning disabled for power efficiency
   Future<Map<String, dynamic>> optimizeForMobile({
     int maxLength = 2048,
     int contextLength = 4096,
@@ -1410,15 +1415,46 @@ class OnnxGenAIConfig {
     bool pastPresentShareBuffer = true,
     bool doSample = false,
   }) async {
-    return update({
-      'model.context_length': contextLength,
-      // Thread counts are numbers, other session_options are strings
-      'model.decoder.session_options.intra_op_num_threads': intraOpThreads,
-      'model.decoder.session_options.inter_op_num_threads': interOpThreads,
-      'search.max_length': maxLength,
-      'search.past_present_share_buffer': pastPresentShareBuffer,
-      'search.do_sample': doSample,
-    });
+    final config = await read();
+
+    // Ensure nested structures exist
+    config['model'] ??= <String, dynamic>{};
+    final model = config['model'] as Map<String, dynamic>;
+    model['context_length'] = contextLength;
+
+    model['decoder'] ??= <String, dynamic>{};
+    final decoder = model['decoder'] as Map<String, dynamic>;
+
+    // === SESSION OPTIONS ===
+    decoder['session_options'] ??= <String, dynamic>{};
+    final sessionOpts = decoder['session_options'] as Map<String, dynamic>;
+
+    // Thread configuration (integers)
+    sessionOpts['intra_op_num_threads'] = intraOpThreads;
+    sessionOpts['inter_op_num_threads'] = interOpThreads;
+
+    // Memory optimizations (booleans)
+    sessionOpts['enable_mem_pattern'] = true;
+    sessionOpts['enable_cpu_mem_arena'] = true;
+
+    // High-priority v0.4.1 optimizations (config_entries as strings)
+    // Disable thread spinning for power efficiency
+    sessionOpts['session.intra_op.allow_spinning'] = '0';
+    sessionOpts['session.inter_op.allow_spinning'] = '0';
+    // ARM64 bfloat16 GEMM fast math (significant speedup on Tensor G3)
+    sessionOpts['mlas.enable_gemm_fastmath_arm64_bfloat16'] = '1';
+    // Denormal-as-zero for faster float operations
+    sessionOpts['session.set_denormal_as_zero'] = '1';
+
+    // === SEARCH OPTIONS ===
+    config['search'] ??= <String, dynamic>{};
+    final search = config['search'] as Map<String, dynamic>;
+    search['max_length'] = maxLength;
+    search['past_present_share_buffer'] = pastPresentShareBuffer;
+    search['do_sample'] = doSample;
+
+    await write(config);
+    return config;
   }
 
   /// Applies aggressive performance optimizations for maximum speed.
@@ -1479,6 +1515,89 @@ class OnnxGenAIConfig {
       'search.do_sample': false,
       'search.early_stopping': true,
     });
+  }
+
+  /// Test G: XNNPACK + 4 threads + High Priority Optimizations
+  ///
+  /// Builds on the best benchmark config (Test D: XNNPACK + 4 threads = 4.59 tok/s)
+  /// and adds high-priority ONNX Runtime optimizations:
+  ///
+  /// 1. **run_options.memory.enable_memory_arena_shrinkage** - Shrinks memory
+  ///    arenas between runs to reduce memory usage on constrained devices.
+  ///
+  /// 2. **session.intra_op.allow_spinning = "0"** - Disables thread spinning
+  ///    for power efficiency on mobile devices. Threads block instead of spin.
+  ///
+  /// 3. **mlas.enable_gemm_fastmath_arm64_bfloat16 = "1"** - Enables ARM64
+  ///    bfloat16 GEMM acceleration for faster matrix operations on ARM devices.
+  ///
+  /// 4. **session.set_denormal_as_zero = "1"** - Treats denormal floats as zero
+  ///    for faster floating-point operations.
+  ///
+  /// Use with XNNPACK provider at runtime for best results:
+  /// ```dart
+  /// final config = OnnxGenAI.createConfig();
+  /// OnnxGenAI.configClearProviders(config);
+  /// OnnxGenAI.configAppendProvider(config, 'XNNPACK');
+  /// OnnxGenAI.runInferenceWithConfigAsync(..., configHandle: config);
+  /// ```
+  ///
+  /// Returns the updated configuration.
+  Future<Map<String, dynamic>> optimizeTestG({
+    int maxLength = 2048,
+    int contextLength = 4096,
+    int intraOpThreads = 4,
+    int interOpThreads = 1,
+  }) async {
+    final config = await read();
+
+    // Ensure nested structures exist
+    config['model'] ??= <String, dynamic>{};
+    final model = config['model'] as Map<String, dynamic>;
+    model['context_length'] = contextLength;
+
+    model['decoder'] ??= <String, dynamic>{};
+    final decoder = model['decoder'] as Map<String, dynamic>;
+
+    // === SESSION OPTIONS ===
+    decoder['session_options'] ??= <String, dynamic>{};
+    final sessionOpts = decoder['session_options'] as Map<String, dynamic>;
+
+    // Thread configuration (integers)
+    sessionOpts['intra_op_num_threads'] = intraOpThreads;
+    sessionOpts['inter_op_num_threads'] = interOpThreads;
+
+    // Memory optimizations (booleans)
+    sessionOpts['enable_mem_pattern'] = true;
+    sessionOpts['enable_cpu_mem_arena'] = true;
+
+    // High Priority #2: Disable thread spinning for power efficiency
+    // These are config_entries (unknown keys become AddConfigEntry calls)
+    sessionOpts['session.intra_op.allow_spinning'] = '0';
+    sessionOpts['session.inter_op.allow_spinning'] = '0';
+
+    // High Priority #3: ARM64 bfloat16 GEMM fast math
+    sessionOpts['mlas.enable_gemm_fastmath_arm64_bfloat16'] = '1';
+
+    // High Priority #4: Denormal as zero for faster float ops
+    sessionOpts['session.set_denormal_as_zero'] = '1';
+
+    // === RUN OPTIONS ===
+    // High Priority #1: Memory arena shrinkage
+    // run_options is an object where each key is passed to AddConfigEntry
+    decoder['run_options'] ??= <String, dynamic>{};
+    final runOpts = decoder['run_options'] as Map<String, dynamic>;
+    runOpts['memory.enable_memory_arena_shrinkage'] = 'cpu:0';
+
+    // === SEARCH OPTIONS ===
+    config['search'] ??= <String, dynamic>{};
+    final search = config['search'] as Map<String, dynamic>;
+    search['max_length'] = maxLength;
+    search['past_present_share_buffer'] = true;
+    search['do_sample'] = false;
+
+    await write(config);
+    return config;
   }
 
   /// Prints the current configuration to the console for debugging.

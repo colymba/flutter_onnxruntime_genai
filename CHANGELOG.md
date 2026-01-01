@@ -1,3 +1,11 @@
+## 0.4.1
+
+* **Enhanced `optimizeForMobile()`** - Now includes high-priority ONNX Runtime optimizations:
+  * ARM64 bfloat16 GEMM fast math (`mlas.enable_gemm_fastmath_arm64_bfloat16`)
+  * Denormal-as-zero for faster float ops (`session.set_denormal_as_zero`)
+  * Thread spinning disabled for power efficiency (`session.intra_op.allow_spinning`)
+* Performance improvement: **5.22 tok/s** on Pixel 8a (+113% vs factory, +13% vs v0.4.0)
+
 ## 0.4.0
 
 * **New: Performance Benchmarking** - Added comprehensive benchmarks for Gemma 3 4B on Pixel 8a.
