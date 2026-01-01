@@ -184,6 +184,129 @@ class HealthStatus {
 }
 
 // =============================================================================
+// Debug Timing Helper
+// =============================================================================
+
+/// Helper class for timing inference steps when debug mode is enabled.
+///
+/// Tracks elapsed time for each step and provides a formatted summary.
+///
+/// Example output:
+/// ```
+/// [OnnxGenAI] Inference Timing:
+///   Step 1: Create config ................ 12.3 ms
+///   Step 2: Clear providers .............. 0.1 ms
+///   Step 3: Add provider XNNPACK ......... 0.2 ms
+///   Step 4: Run inference ................ 8542.7 ms
+///   Step 5: Destroy config ............... 0.1 ms
+///   ─────────────────────────────────────────────
+///   Total: 8555.4 ms (8.56 seconds)
+/// ```
+class InferenceTimer {
+  final bool enabled;
+  final List<_TimingEntry> _entries = [];
+  final Stopwatch _totalStopwatch = Stopwatch();
+  Stopwatch? _stepStopwatch;
+  int _stepCount = 0;
+
+  /// Creates a timer. Pass [enabled] = false to create a no-op timer.
+  InferenceTimer({this.enabled = true}) {
+    if (enabled) {
+      _totalStopwatch.start();
+    }
+  }
+
+  /// Starts timing a new step with the given description.
+  void startStep(String description) {
+    if (!enabled) return;
+    _stepStopwatch = Stopwatch()..start();
+    _stepCount++;
+  }
+
+  /// Ends the current step and records its duration.
+  void endStep(String description) {
+    if (!enabled || _stepStopwatch == null) return;
+    _stepStopwatch!.stop();
+    _entries.add(
+      _TimingEntry(
+        step: _stepCount,
+        description: description,
+        duration: _stepStopwatch!.elapsed,
+      ),
+    );
+    _stepStopwatch = null;
+  }
+
+  /// Times a synchronous operation and records it as a step.
+  T time<T>(String description, T Function() operation) {
+    if (!enabled) return operation();
+    startStep(description);
+    try {
+      return operation();
+    } finally {
+      endStep(description);
+    }
+  }
+
+  /// Stops the timer and prints the summary to console.
+  void stop() {
+    if (!enabled) return;
+    _totalStopwatch.stop();
+    _printSummary();
+  }
+
+  /// Gets the total elapsed time.
+  Duration get totalElapsed => _totalStopwatch.elapsed;
+
+  /// Gets all timing entries.
+  List<({int step, String description, Duration duration})> get entries =>
+      _entries
+          .map(
+            (e) => (
+              step: e.step,
+              description: e.description,
+              duration: e.duration,
+            ),
+          )
+          .toList();
+
+  void _printSummary() {
+    final buffer = StringBuffer();
+    buffer.writeln('[OnnxGenAI] Inference Timing:');
+
+    for (final entry in _entries) {
+      final stepStr = 'Step ${entry.step}:';
+      final descPadded = entry.description.padRight(30, '.');
+      final ms = entry.duration.inMicroseconds / 1000;
+      final msStr = ms.toStringAsFixed(1).padLeft(10);
+      buffer.writeln('  $stepStr $descPadded $msStr ms');
+    }
+
+    buffer.writeln('  ${'─' * 45}');
+    final totalMs = _totalStopwatch.elapsedMicroseconds / 1000;
+    final totalSec = totalMs / 1000;
+    buffer.writeln(
+      '  Total: ${totalMs.toStringAsFixed(1)} ms (${totalSec.toStringAsFixed(2)} seconds)',
+    );
+
+    // ignore: avoid_print
+    print(buffer.toString());
+  }
+}
+
+class _TimingEntry {
+  final int step;
+  final String description;
+  final Duration duration;
+
+  _TimingEntry({
+    required this.step,
+    required this.description,
+    required this.duration,
+  });
+}
+
+// =============================================================================
 // OnnxGenAI - Main FFI Binding Class
 // =============================================================================
 
@@ -197,6 +320,9 @@ class HealthStatus {
 /// ```dart
 /// final onnx = OnnxGenAI();
 ///
+/// // Enable debug timing
+/// OnnxGenAI.debugTiming = true;
+///
 /// // Check if library is loaded
 /// print('Library version: ${onnx.libraryVersion}');
 ///
@@ -206,6 +332,7 @@ class HealthStatus {
 ///   prompt: 'Describe this image.',
 ///   imagePath: '/path/to/image.jpg',
 /// );
+/// // When debug=true, timing info is printed to console
 /// ```
 class OnnxGenAI {
   /// Creates an instance of [OnnxGenAI] and loads the native library.
@@ -219,6 +346,23 @@ class OnnxGenAI {
   }
 
   static OnnxGenAI? _instance;
+
+  /// Enable debug mode to print timing information for inference steps.
+  ///
+  /// When enabled, each async inference method will print detailed timing
+  /// for each step (config creation, provider setup, inference, cleanup).
+  ///
+  /// Example:
+  /// ```dart
+  /// OnnxGenAI.debugTiming = true;
+  /// final result = await onnx.runInferenceWithConfigAsync(...);
+  /// // Prints:
+  /// // [OnnxGenAI] Inference Timing:
+  /// //   Step 1: Create config ................ 12.3 ms
+  /// //   Step 2: Clear providers .............. 0.1 ms
+  /// //   ...
+  /// ```
+  static bool debugTiming = false;
 
   /// The loaded dynamic library.
   late final DynamicLibrary _dylib;
@@ -797,14 +941,21 @@ class OnnxGenAI {
     List<String>? providers,
     Map<String, Map<String, String>>? providerOptions,
   }) async {
+    // Capture debug flag before entering isolate (static vars aren't shared)
+    final debugEnabled = OnnxGenAI.debugTiming;
+
     return Isolate.run(() {
       final onnx = OnnxGenAI();
+      final timer = InferenceTimer(enabled: debugEnabled);
 
       // Create config
       // Note: configHandle is a pointer cast to int64, which may appear negative
       // if the MSB is set. Only check for 0 (null pointer).
-      final configHandle = onnx.createConfig(modelPath);
+      final configHandle = timer.time('Create config', () {
+        return onnx.createConfig(modelPath);
+      });
       if (configHandle == 0) {
+        timer.stop();
         throw OnnxGenAIException(
           'Failed to create config: ${onnx.getLastError()}',
         );
@@ -813,10 +964,15 @@ class OnnxGenAI {
       try {
         // Configure providers
         if (providers != null && providers.isNotEmpty) {
-          onnx.configClearProviders(configHandle);
+          timer.time('Clear providers', () {
+            onnx.configClearProviders(configHandle);
+          });
           for (final provider in providers) {
-            final result = onnx.configAppendProvider(configHandle, provider);
+            final result = timer.time('Add provider $provider', () {
+              return onnx.configAppendProvider(configHandle, provider);
+            });
             if (result < 0) {
+              timer.stop();
               throw OnnxGenAIException(
                 'Failed to add provider "$provider": ${onnx.getLastError()}',
               );
@@ -830,13 +986,16 @@ class OnnxGenAI {
             final providerName = entry.key;
             final options = entry.value;
             for (final option in options.entries) {
-              final result = onnx.configSetProviderOption(
-                configHandle,
-                providerName,
-                option.key,
-                option.value,
-              );
+              final result = timer.time('Set $providerName.${option.key}', () {
+                return onnx.configSetProviderOption(
+                  configHandle,
+                  providerName,
+                  option.key,
+                  option.value,
+                );
+              });
               if (result < 0) {
+                timer.stop();
                 throw OnnxGenAIException(
                   'Failed to set option "${option.key}" for "$providerName": ${onnx.getLastError()}',
                 );
@@ -846,13 +1005,20 @@ class OnnxGenAI {
         }
 
         // Run inference
-        return onnx.runInferenceWithConfig(
-          configHandle: configHandle,
-          prompt: prompt,
-          imagePath: imagePath,
-        );
+        final result = timer.time('Run inference', () {
+          return onnx.runInferenceWithConfig(
+            configHandle: configHandle,
+            prompt: prompt,
+            imagePath: imagePath,
+          );
+        });
+
+        return result;
       } finally {
-        onnx.destroyConfig(configHandle);
+        timer.time('Destroy config', () {
+          onnx.destroyConfig(configHandle);
+        });
+        timer.stop();
       }
     });
   }
@@ -893,14 +1059,21 @@ class OnnxGenAI {
     List<String>? providers,
     Map<String, Map<String, String>>? providerOptions,
   }) async {
+    // Capture debug flag before entering isolate (static vars aren't shared)
+    final debugEnabled = OnnxGenAI.debugTiming;
+
     return Isolate.run(() {
       final onnx = OnnxGenAI();
+      final timer = InferenceTimer(enabled: debugEnabled);
 
       // Create config
       // Note: configHandle is a pointer cast to int64, which may appear negative
       // if the MSB is set. Only check for 0 (null pointer).
-      final configHandle = onnx.createConfig(modelPath);
+      final configHandle = timer.time('Create config', () {
+        return onnx.createConfig(modelPath);
+      });
       if (configHandle == 0) {
+        timer.stop();
         throw OnnxGenAIException(
           'Failed to create config: ${onnx.getLastError()}',
         );
@@ -909,10 +1082,15 @@ class OnnxGenAI {
       try {
         // Configure providers
         if (providers != null && providers.isNotEmpty) {
-          onnx.configClearProviders(configHandle);
+          timer.time('Clear providers', () {
+            onnx.configClearProviders(configHandle);
+          });
           for (final provider in providers) {
-            final result = onnx.configAppendProvider(configHandle, provider);
+            final result = timer.time('Add provider $provider', () {
+              return onnx.configAppendProvider(configHandle, provider);
+            });
             if (result < 0) {
+              timer.stop();
               throw OnnxGenAIException(
                 'Failed to add provider "$provider": ${onnx.getLastError()}',
               );
@@ -926,13 +1104,16 @@ class OnnxGenAI {
             final providerName = entry.key;
             final options = entry.value;
             for (final option in options.entries) {
-              final result = onnx.configSetProviderOption(
-                configHandle,
-                providerName,
-                option.key,
-                option.value,
-              );
+              final result = timer.time('Set $providerName.${option.key}', () {
+                return onnx.configSetProviderOption(
+                  configHandle,
+                  providerName,
+                  option.key,
+                  option.value,
+                );
+              });
               if (result < 0) {
+                timer.stop();
                 throw OnnxGenAIException(
                   'Failed to set option "${option.key}" for "$providerName": ${onnx.getLastError()}',
                 );
@@ -942,13 +1123,20 @@ class OnnxGenAI {
         }
 
         // Run inference with multiple images
-        return onnx.runInferenceMultiWithConfig(
-          configHandle: configHandle,
-          prompt: prompt,
-          imagePaths: imagePaths,
-        );
+        final result = timer.time('Run inference (multi)', () {
+          return onnx.runInferenceMultiWithConfig(
+            configHandle: configHandle,
+            prompt: prompt,
+            imagePaths: imagePaths,
+          );
+        });
+
+        return result;
       } finally {
-        onnx.destroyConfig(configHandle);
+        timer.time('Destroy config', () {
+          onnx.destroyConfig(configHandle);
+        });
+        timer.stop();
       }
     });
   }
