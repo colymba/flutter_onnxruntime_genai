@@ -76,6 +76,78 @@ typedef ShutdownOnnxGenAINative = Void Function();
 typedef ShutdownOnnxGenAIDart = void Function();
 
 // =============================================================================
+// Configuration API Native Function Types
+// =============================================================================
+
+/// Native function: int64_t create_config(const char* model_path)
+typedef CreateConfigNative = Int64 Function(Pointer<Utf8> modelPath);
+typedef CreateConfigDart = int Function(Pointer<Utf8> modelPath);
+
+/// Native function: void destroy_config(int64_t config_handle)
+typedef DestroyConfigNative = Void Function(Int64 configHandle);
+typedef DestroyConfigDart = void Function(int configHandle);
+
+/// Native function: int32_t config_clear_providers(int64_t config_handle)
+typedef ConfigClearProvidersNative = Int32 Function(Int64 configHandle);
+typedef ConfigClearProvidersDart = int Function(int configHandle);
+
+/// Native function: int32_t config_append_provider(int64_t config_handle, const char* provider_name)
+typedef ConfigAppendProviderNative =
+    Int32 Function(Int64 configHandle, Pointer<Utf8> providerName);
+typedef ConfigAppendProviderDart =
+    int Function(int configHandle, Pointer<Utf8> providerName);
+
+/// Native function: int32_t config_set_provider_option(int64_t config_handle, const char* provider_name, const char* key, const char* value)
+typedef ConfigSetProviderOptionNative =
+    Int32 Function(
+      Int64 configHandle,
+      Pointer<Utf8> providerName,
+      Pointer<Utf8> key,
+      Pointer<Utf8> value,
+    );
+typedef ConfigSetProviderOptionDart =
+    int Function(
+      int configHandle,
+      Pointer<Utf8> providerName,
+      Pointer<Utf8> key,
+      Pointer<Utf8> value,
+    );
+
+/// Native function: const char* run_inference_with_config(int64_t config_handle, const char* prompt, const char* image_path)
+typedef RunInferenceWithConfigNative =
+    Pointer<Utf8> Function(
+      Int64 configHandle,
+      Pointer<Utf8> prompt,
+      Pointer<Utf8> imagePath,
+    );
+typedef RunInferenceWithConfigDart =
+    Pointer<Utf8> Function(
+      int configHandle,
+      Pointer<Utf8> prompt,
+      Pointer<Utf8> imagePath,
+    );
+
+/// Native function: const char* run_inference_multi_with_config(int64_t config_handle, const char* prompt, const char** image_paths, int32_t image_count)
+typedef RunInferenceMultiWithConfigNative =
+    Pointer<Utf8> Function(
+      Int64 configHandle,
+      Pointer<Utf8> prompt,
+      Pointer<Pointer<Utf8>> imagePaths,
+      Int32 imageCount,
+    );
+typedef RunInferenceMultiWithConfigDart =
+    Pointer<Utf8> Function(
+      int configHandle,
+      Pointer<Utf8> prompt,
+      Pointer<Pointer<Utf8>> imagePaths,
+      int imageCount,
+    );
+
+/// Native function: const char* get_last_error()
+typedef GetLastErrorNative = Pointer<Utf8> Function();
+typedef GetLastErrorDart = Pointer<Utf8> Function();
+
+// =============================================================================
 // Health Check Status Codes
 // =============================================================================
 
@@ -158,6 +230,16 @@ class OnnxGenAI {
   late final GetLibraryVersionDart _getLibraryVersion;
   late final ShutdownOnnxGenAIDart _shutdownOnnxGenAI;
 
+  // Configuration API functions
+  late final CreateConfigDart _createConfig;
+  late final DestroyConfigDart _destroyConfig;
+  late final ConfigClearProvidersDart _configClearProviders;
+  late final ConfigAppendProviderDart _configAppendProvider;
+  late final ConfigSetProviderOptionDart _configSetProviderOption;
+  late final RunInferenceWithConfigDart _runInferenceWithConfig;
+  late final RunInferenceMultiWithConfigDart _runInferenceMultiWithConfig;
+  late final GetLastErrorDart _getLastError;
+
   // Track worker isolate for cleanup
   Isolate? _workerIsolate;
 
@@ -208,6 +290,49 @@ class OnnxGenAI {
     _shutdownOnnxGenAI = _dylib
         .lookup<NativeFunction<ShutdownOnnxGenAINative>>('shutdown_onnx_genai')
         .asFunction<ShutdownOnnxGenAIDart>();
+
+    // Configuration API bindings
+    _createConfig = _dylib
+        .lookup<NativeFunction<CreateConfigNative>>('create_config')
+        .asFunction<CreateConfigDart>();
+
+    _destroyConfig = _dylib
+        .lookup<NativeFunction<DestroyConfigNative>>('destroy_config')
+        .asFunction<DestroyConfigDart>();
+
+    _configClearProviders = _dylib
+        .lookup<NativeFunction<ConfigClearProvidersNative>>(
+          'config_clear_providers',
+        )
+        .asFunction<ConfigClearProvidersDart>();
+
+    _configAppendProvider = _dylib
+        .lookup<NativeFunction<ConfigAppendProviderNative>>(
+          'config_append_provider',
+        )
+        .asFunction<ConfigAppendProviderDart>();
+
+    _configSetProviderOption = _dylib
+        .lookup<NativeFunction<ConfigSetProviderOptionNative>>(
+          'config_set_provider_option',
+        )
+        .asFunction<ConfigSetProviderOptionDart>();
+
+    _runInferenceWithConfig = _dylib
+        .lookup<NativeFunction<RunInferenceWithConfigNative>>(
+          'run_inference_with_config',
+        )
+        .asFunction<RunInferenceWithConfigDart>();
+
+    _runInferenceMultiWithConfig = _dylib
+        .lookup<NativeFunction<RunInferenceMultiWithConfigNative>>(
+          'run_inference_multi_with_config',
+        )
+        .asFunction<RunInferenceMultiWithConfigDart>();
+
+    _getLastError = _dylib
+        .lookup<NativeFunction<GetLastErrorNative>>('get_last_error')
+        .asFunction<GetLastErrorDart>();
   }
 
   // ===========================================================================
@@ -368,6 +493,191 @@ class OnnxGenAI {
     _workerIsolate = null;
   }
 
+  /// Gets the last error message from the native library.
+  String getLastError() {
+    final ptr = _getLastError();
+    return ptr.toDartString();
+  }
+
+  // ===========================================================================
+  // Configuration API - Runtime Session Options
+  // ===========================================================================
+
+  /// Creates a configuration object for customizing execution providers.
+  ///
+  /// Use this to configure execution providers and session options before
+  /// loading the model. Returns a config handle that must be destroyed with
+  /// [destroyConfig] when no longer needed.
+  ///
+  /// Example:
+  /// ```dart
+  /// final configHandle = onnx.createConfig('/path/to/model');
+  /// onnx.configClearProviders(configHandle);
+  /// onnx.configAppendProvider(configHandle, 'XNNPACK');
+  /// onnx.configSetProviderOption(configHandle, 'cpu', 'intra_op_num_threads', '4');
+  /// final result = onnx.runInferenceWithConfig(configHandle, 'Hello', null);
+  /// onnx.destroyConfig(configHandle);
+  /// ```
+  ///
+  /// Returns a config handle (> 0 on success, 0 on failure).
+  int createConfig(String modelPath) {
+    final modelPathPtr = modelPath.toNativeUtf8();
+    try {
+      return _createConfig(modelPathPtr);
+    } finally {
+      calloc.free(modelPathPtr);
+    }
+  }
+
+  /// Destroys a configuration object and frees its resources.
+  void destroyConfig(int configHandle) {
+    _destroyConfig(configHandle);
+  }
+
+  /// Clears all execution providers from the config.
+  ///
+  /// Call this before adding custom providers to start fresh.
+  /// Returns 1 on success, negative value on failure.
+  int configClearProviders(int configHandle) {
+    return _configClearProviders(configHandle);
+  }
+
+  /// Appends an execution provider to the config.
+  ///
+  /// Providers are tried in order of insertion. Common providers:
+  /// - `"cpu"`: Default CPU execution
+  /// - `"XNNPACK"`: Optimized ARM CPU kernels (recommended for mobile)
+  /// - `"QNN"`: Qualcomm NPU (Snapdragon only)
+  /// - `"NNAPI"`: Android Neural Networks API
+  /// - `"CoreML"`: Apple Neural Engine (iOS only)
+  ///
+  /// Returns 1 on success, negative value on failure.
+  int configAppendProvider(int configHandle, String providerName) {
+    final providerPtr = providerName.toNativeUtf8();
+    try {
+      return _configAppendProvider(configHandle, providerPtr);
+    } finally {
+      calloc.free(providerPtr);
+    }
+  }
+
+  /// Sets an option for a specific execution provider.
+  ///
+  /// Common options for CPU provider:
+  /// - `"intra_op_num_threads"`: Threads within an op (e.g., "4")
+  /// - `"inter_op_num_threads"`: Threads between ops (e.g., "1")
+  ///
+  /// Returns 1 on success, negative value on failure.
+  int configSetProviderOption(
+    int configHandle,
+    String providerName,
+    String key,
+    String value,
+  ) {
+    final providerPtr = providerName.toNativeUtf8();
+    final keyPtr = key.toNativeUtf8();
+    final valuePtr = value.toNativeUtf8();
+    try {
+      return _configSetProviderOption(
+        configHandle,
+        providerPtr,
+        keyPtr,
+        valuePtr,
+      );
+    } finally {
+      calloc.free(providerPtr);
+      calloc.free(keyPtr);
+      calloc.free(valuePtr);
+    }
+  }
+
+  /// Runs inference using a pre-configured config.
+  ///
+  /// WARNING: This is a LONG-RUNNING, BLOCKING operation!
+  /// DO NOT call from the main UI isolate. Use [runInferenceWithConfigAsync] instead.
+  ///
+  /// Parameters:
+  /// - [configHandle]: Handle returned by [createConfig]
+  /// - [prompt]: Text prompt for generation
+  /// - [imagePath]: Optional path to image file (null for text-only)
+  ///
+  /// Returns the generated text, or throws [OnnxGenAIException] on error.
+  String runInferenceWithConfig({
+    required int configHandle,
+    required String prompt,
+    String? imagePath,
+  }) {
+    final promptPtr = prompt.toNativeUtf8();
+    final imagePathPtr = imagePath != null ? imagePath.toNativeUtf8() : nullptr;
+
+    try {
+      final resultPtr = _runInferenceWithConfig(
+        configHandle,
+        promptPtr,
+        imagePathPtr,
+      );
+      final result = resultPtr.toDartString();
+
+      if (result.startsWith('ERROR:')) {
+        throw OnnxGenAIException(result.substring(6).trim());
+      }
+
+      return result;
+    } finally {
+      calloc.free(promptPtr);
+      if (imagePath != null) {
+        calloc.free(imagePathPtr);
+      }
+    }
+  }
+
+  /// Runs multi-image inference using a pre-configured config.
+  ///
+  /// WARNING: This is a LONG-RUNNING, BLOCKING operation!
+  /// DO NOT call from the main UI isolate. Use [runInferenceMultiWithConfigAsync] instead.
+  ///
+  /// Parameters:
+  /// - [configHandle]: Handle returned by [createConfig]
+  /// - [prompt]: Text prompt for generation (with <|image_N|> placeholders)
+  /// - [imagePaths]: List of paths to image files
+  ///
+  /// Returns the generated text, or throws [OnnxGenAIException] on error.
+  String runInferenceMultiWithConfig({
+    required int configHandle,
+    required String prompt,
+    required List<String> imagePaths,
+  }) {
+    final promptPtr = prompt.toNativeUtf8();
+
+    // Allocate array of pointers for image paths
+    final imagePathsPtr = calloc<Pointer<Utf8>>(imagePaths.length);
+    for (var i = 0; i < imagePaths.length; i++) {
+      imagePathsPtr[i] = imagePaths[i].toNativeUtf8();
+    }
+
+    try {
+      final resultPtr = _runInferenceMultiWithConfig(
+        configHandle,
+        promptPtr,
+        imagePathsPtr,
+        imagePaths.length,
+      );
+      final result = resultPtr.toDartString();
+
+      if (result.startsWith('ERROR:')) {
+        throw OnnxGenAIException(result.substring(6).trim());
+      }
+
+      return result;
+    } finally {
+      calloc.free(promptPtr);
+      for (var i = 0; i < imagePaths.length; i++) {
+        calloc.free(imagePathsPtr[i]);
+      }
+      calloc.free(imagePathsPtr);
+    }
+  }
+
   // ===========================================================================
   // Public API - Asynchronous (safe for main isolate)
   // ===========================================================================
@@ -445,6 +755,200 @@ class OnnxGenAI {
     return Isolate.run(() {
       final onnx = OnnxGenAI();
       return onnx.checkNativeHealth(modelPath);
+    });
+  }
+
+  /// Runs inference with custom execution provider configuration asynchronously.
+  ///
+  /// This is the recommended way to use custom configs from the main UI isolate.
+  /// Creates the config, applies settings, runs inference, and cleans up - all
+  /// in a background isolate.
+  ///
+  /// Parameters:
+  /// - [modelPath]: Path to the ONNX GenAI model directory.
+  /// - [prompt]: Text prompt for generation.
+  /// - [imagePath]: Optional path to image file (null for text-only).
+  /// - [providers]: List of execution providers in priority order.
+  ///   Common values: `['XNNPACK', 'cpu']`, `['cpu']`, `['CoreML', 'cpu']`
+  /// - [providerOptions]: Map of provider-specific options.
+  ///   Example: `{'cpu': {'intra_op_num_threads': '4'}}`
+  ///
+  /// Returns a [Future] that completes with the generated text.
+  ///
+  /// Example:
+  /// ```dart
+  /// final result = await onnx.runInferenceWithConfigAsync(
+  ///   modelPath: '/path/to/model',
+  ///   prompt: 'Hello, how are you?',
+  ///   providers: ['XNNPACK', 'cpu'],
+  ///   providerOptions: {
+  ///     'cpu': {
+  ///       'intra_op_num_threads': '4',
+  ///       'inter_op_num_threads': '1',
+  ///     },
+  ///   },
+  /// );
+  /// ```
+  Future<String> runInferenceWithConfigAsync({
+    required String modelPath,
+    required String prompt,
+    String? imagePath,
+    List<String>? providers,
+    Map<String, Map<String, String>>? providerOptions,
+  }) async {
+    return Isolate.run(() {
+      final onnx = OnnxGenAI();
+
+      // Create config
+      // Note: configHandle is a pointer cast to int64, which may appear negative
+      // if the MSB is set. Only check for 0 (null pointer).
+      final configHandle = onnx.createConfig(modelPath);
+      if (configHandle == 0) {
+        throw OnnxGenAIException(
+          'Failed to create config: ${onnx.getLastError()}',
+        );
+      }
+
+      try {
+        // Configure providers
+        if (providers != null && providers.isNotEmpty) {
+          onnx.configClearProviders(configHandle);
+          for (final provider in providers) {
+            final result = onnx.configAppendProvider(configHandle, provider);
+            if (result < 0) {
+              throw OnnxGenAIException(
+                'Failed to add provider "$provider": ${onnx.getLastError()}',
+              );
+            }
+          }
+        }
+
+        // Configure provider options
+        if (providerOptions != null) {
+          for (final entry in providerOptions.entries) {
+            final providerName = entry.key;
+            final options = entry.value;
+            for (final option in options.entries) {
+              final result = onnx.configSetProviderOption(
+                configHandle,
+                providerName,
+                option.key,
+                option.value,
+              );
+              if (result < 0) {
+                throw OnnxGenAIException(
+                  'Failed to set option "${option.key}" for "$providerName": ${onnx.getLastError()}',
+                );
+              }
+            }
+          }
+        }
+
+        // Run inference
+        return onnx.runInferenceWithConfig(
+          configHandle: configHandle,
+          prompt: prompt,
+          imagePath: imagePath,
+        );
+      } finally {
+        onnx.destroyConfig(configHandle);
+      }
+    });
+  }
+
+  /// Runs multi-image inference with custom execution provider configuration asynchronously.
+  ///
+  /// This is the recommended way to use custom configs from the main UI isolate
+  /// when working with multiple images.
+  ///
+  /// Parameters:
+  /// - [modelPath]: Path to the ONNX GenAI model directory.
+  /// - [prompt]: Text prompt for generation (with <|image_N|> placeholders).
+  /// - [imagePaths]: List of paths to image files.
+  /// - [providers]: List of execution providers in priority order.
+  /// - [providerOptions]: Map of provider-specific options.
+  ///
+  /// Returns a [Future] that completes with the generated text.
+  ///
+  /// Example:
+  /// ```dart
+  /// final result = await onnx.runInferenceMultiWithConfigAsync(
+  ///   modelPath: '/path/to/model',
+  ///   prompt: '<|image_1|><|image_2|>\nCompare these two images.',
+  ///   imagePaths: ['/path/to/image1.jpg', '/path/to/image2.jpg'],
+  ///   providers: ['XNNPACK', 'cpu'],
+  ///   providerOptions: {
+  ///     'cpu': {
+  ///       'intra_op_num_threads': '4',
+  ///       'inter_op_num_threads': '1',
+  ///     },
+  ///   },
+  /// );
+  /// ```
+  Future<String> runInferenceMultiWithConfigAsync({
+    required String modelPath,
+    required String prompt,
+    required List<String> imagePaths,
+    List<String>? providers,
+    Map<String, Map<String, String>>? providerOptions,
+  }) async {
+    return Isolate.run(() {
+      final onnx = OnnxGenAI();
+
+      // Create config
+      // Note: configHandle is a pointer cast to int64, which may appear negative
+      // if the MSB is set. Only check for 0 (null pointer).
+      final configHandle = onnx.createConfig(modelPath);
+      if (configHandle == 0) {
+        throw OnnxGenAIException(
+          'Failed to create config: ${onnx.getLastError()}',
+        );
+      }
+
+      try {
+        // Configure providers
+        if (providers != null && providers.isNotEmpty) {
+          onnx.configClearProviders(configHandle);
+          for (final provider in providers) {
+            final result = onnx.configAppendProvider(configHandle, provider);
+            if (result < 0) {
+              throw OnnxGenAIException(
+                'Failed to add provider "$provider": ${onnx.getLastError()}',
+              );
+            }
+          }
+        }
+
+        // Configure provider options
+        if (providerOptions != null) {
+          for (final entry in providerOptions.entries) {
+            final providerName = entry.key;
+            final options = entry.value;
+            for (final option in options.entries) {
+              final result = onnx.configSetProviderOption(
+                configHandle,
+                providerName,
+                option.key,
+                option.value,
+              );
+              if (result < 0) {
+                throw OnnxGenAIException(
+                  'Failed to set option "${option.key}" for "$providerName": ${onnx.getLastError()}',
+                );
+              }
+            }
+          }
+        }
+
+        // Run inference with multiple images
+        return onnx.runInferenceMultiWithConfig(
+          configHandle: configHandle,
+          prompt: prompt,
+          imagePaths: imagePaths,
+        );
+      } finally {
+        onnx.destroyConfig(configHandle);
+      }
     });
   }
 }

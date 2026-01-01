@@ -143,6 +143,35 @@ await for (final token in streamer.streamInference(
 }
 ```
 
+### ⚡ Performance Optimization with Execution Providers
+
+For better performance on mobile devices, you can configure execution providers at runtime. This allows you to:
+
+- Use hardware-accelerated inference (XNNPACK, QNN, CoreML)
+- Override settings without modifying `genai_config.json`
+
+```dart
+// Use XNNPACK for optimized ARM inference on mobile
+final result = await onnx.runInferenceWithConfigAsync(
+  modelPath: '/path/to/model',
+  prompt: 'Hello, how are you?',
+  providers: ['XNNPACK'],  // Use XNNPACK execution provider
+);
+```
+
+#### Supported Execution Providers
+
+| Provider | Platform | Description | Best For |
+|----------|----------|-------------|----------|
+| `XNNPACK` | Android/iOS | Optimized ARM NEON kernels | Mobile ARM devices |
+| `QNN` | Android | Qualcomm Hexagon NPU | Snapdragon devices |
+| `CoreML` | iOS/macOS | Apple Neural Engine | Apple devices with ANE |
+| `SNPE` | Android | Snapdragon Neural Processing Engine | Qualcomm devices |
+| `OpenVINO` | Desktop | Intel optimized inference | Intel CPUs/GPUs |
+| `DML` | Windows | DirectML GPU acceleration | Windows with DirectX 12 |
+
+> **Note**: `cpu` is NOT a valid provider name. CPU execution is the default fallback when no other provider is available. Thread configuration is done via the model's `genai_config.json` file.
+
 ## Architecture
 
 ```
@@ -183,6 +212,14 @@ Main class for ONNX Runtime GenAI operations.
 | `runTextInference(...)` | Text-only inference (blocking) |
 | `runInferenceAsync(...)` | Multimodal inference (background isolate) |
 | `runTextInferenceAsync(...)` | Text-only inference (background isolate) |
+| `runInferenceWithConfigAsync(...)` | Inference with custom execution providers (recommended) |
+| `runInferenceMultiWithConfigAsync(...)` | Multi-image inference with custom providers (recommended) |
+| `createConfig(path)` | Create a configuration object |
+| `destroyConfig(handle)` | Free configuration resources |
+| `configClearProviders(handle)` | Clear all providers from config |
+| `configAppendProvider(handle, name)` | Add an execution provider |
+| `configSetProviderOption(...)` | Set provider-specific options |
+| `getLastError()` | Get last error message from native layer |
 | `shutdown()` | Release native resources |
 
 ### HealthStatus

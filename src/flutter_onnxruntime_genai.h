@@ -125,6 +125,116 @@ FFI_PLUGIN_EXPORT const char *run_text_inference(const char *model_path,
                                                  const char *prompt,
                                                  int32_t max_length);
 
+// =============================================================================
+// Configuration API - Runtime Session Options
+// =============================================================================
+
+/**
+ * @brief Create a configuration object from a model path.
+ *
+ * The configuration can be modified before loading the model to customize
+ * execution providers and session options.
+ *
+ * @param model_path Path to the ONNX GenAI model directory
+ * @return Opaque config handle (int64_t pointer), or 0 on failure
+ */
+FFI_PLUGIN_EXPORT int64_t create_config(const char *model_path);
+
+/**
+ * @brief Destroy a configuration object.
+ * @param config_handle Handle returned by create_config
+ */
+FFI_PLUGIN_EXPORT void destroy_config(int64_t config_handle);
+
+/**
+ * @brief Clear all execution providers from the config.
+ *
+ * Call this before adding custom providers to start fresh.
+ *
+ * @param config_handle Handle returned by create_config
+ * @return 1 on success, negative on failure
+ */
+FFI_PLUGIN_EXPORT int32_t config_clear_providers(int64_t config_handle);
+
+/**
+ * @brief Append an execution provider to the config.
+ *
+ * Providers are tried in order of insertion. Common providers:
+ * - "cpu": Default CPU execution
+ * - "XNNPACK": Optimized ARM CPU kernels
+ * - "QNN": Qualcomm NPU (Snapdragon only)
+ * - "NNAPI": Android Neural Networks API
+ * - "CoreML": Apple Neural Engine (iOS only)
+ *
+ * @param config_handle Handle returned by create_config
+ * @param provider_name Name of the execution provider
+ * @return 1 on success, negative on failure
+ */
+FFI_PLUGIN_EXPORT int32_t config_append_provider(int64_t config_handle,
+                                                  const char *provider_name);
+
+/**
+ * @brief Set an option for a specific execution provider.
+ *
+ * Common options for CPU provider:
+ * - "intra_op_num_threads": Threads within an op (e.g., "4")
+ * - "inter_op_num_threads": Threads between ops (e.g., "1")
+ *
+ * @param config_handle Handle returned by create_config
+ * @param provider_name Name of the execution provider
+ * @param key Option key
+ * @param value Option value (as string)
+ * @return 1 on success, negative on failure
+ */
+FFI_PLUGIN_EXPORT int32_t config_set_provider_option(int64_t config_handle,
+                                                      const char *provider_name,
+                                                      const char *key,
+                                                      const char *value);
+
+/**
+ * @brief Run inference using a pre-configured config.
+ *
+ * This allows using custom execution providers and session options.
+ *
+ * WARNING: This is a LONG-RUNNING operation!
+ * MUST be called from a background Dart Isolate.
+ *
+ * @param config_handle Handle returned by create_config
+ * @param prompt The text prompt for generation
+ * @param image_path Path to image file, or NULL for text-only
+ * @return Generated text on success, or error message prefixed with "ERROR:"
+ */
+FFI_PLUGIN_EXPORT const char *run_inference_with_config(int64_t config_handle,
+                                                         const char *prompt,
+                                                         const char *image_path);
+
+/**
+ * @brief Run multi-image inference using a pre-configured config.
+ *
+ * This allows using custom execution providers and session options with
+ * multiple images. The prompt should contain image placeholders like
+ * <|image_1|>, <|image_2|>, etc. matching the number of images provided.
+ *
+ * WARNING: This is a LONG-RUNNING operation!
+ * MUST be called from a background Dart Isolate.
+ *
+ * @param config_handle Handle returned by create_config
+ * @param prompt The text prompt for generation (with image placeholders)
+ * @param image_paths Array of paths to image files
+ * @param image_count Number of images in the array
+ * @return Generated text on success, or error message prefixed with "ERROR:"
+ */
+FFI_PLUGIN_EXPORT const char *run_inference_multi_with_config(int64_t config_handle,
+                                                               const char *prompt,
+                                                               const char **image_paths,
+                                                               int32_t image_count);
+
+/**
+ * @brief Get the last error message.
+ * @return Error message string, or empty string if no error
+ */
+FFI_PLUGIN_EXPORT const char *get_last_error();
+
 #ifdef __cplusplus
 }
 #endif

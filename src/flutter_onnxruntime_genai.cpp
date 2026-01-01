@@ -1061,6 +1061,652 @@ FFI_PLUGIN_EXPORT void shutdown_onnx_genai() {
  *
  * @return Version string in format "major.minor.patch"
  */
-FFI_PLUGIN_EXPORT const char *get_library_version() { return "0.1.0"; }
+FFI_PLUGIN_EXPORT const char *get_library_version() { return "0.3.0"; }
+
+// =============================================================================
+// Configuration API Implementation
+// =============================================================================
+
+/**
+ * @brief Create a configuration object from a model path.
+ */
+FFI_PLUGIN_EXPORT int64_t create_config(const char *model_path) {
+  init_debug_features();
+  DEBUG_LOG("=== create_config START ===");
+  DEBUG_LOG("model_path: %s", model_path ? model_path : "NULL");
+
+  if (model_path == nullptr || strlen(model_path) == 0) {
+    DEBUG_ERROR("NULL or empty model_path provided");
+    set_error("NULL or empty model_path provided");
+    return 0;
+  }
+
+  OgaConfig *config = nullptr;
+  OgaResult *result = OgaCreateConfig(model_path, &config);
+  
+  if (check_oga_result(result, "Config creation failed") || config == nullptr) {
+    DEBUG_ERROR("Config creation failed");
+    return 0;
+  }
+  
+  DEBUG_LOG("Config created successfully: %p", (void*)config);
+  DEBUG_LOG("=== create_config END ===");
+  
+  return reinterpret_cast<int64_t>(config);
+}
+
+/**
+ * @brief Destroy a configuration object.
+ */
+FFI_PLUGIN_EXPORT void destroy_config(int64_t config_handle) {
+  DEBUG_LOG("=== destroy_config ===");
+  if (config_handle == 0) {
+    DEBUG_ERROR("NULL config handle");
+    return;
+  }
+  
+  OgaConfig *config = reinterpret_cast<OgaConfig*>(config_handle);
+  OgaDestroyConfig(config);
+  DEBUG_LOG("Config destroyed");
+}
+
+/**
+ * @brief Clear all execution providers from the config.
+ */
+FFI_PLUGIN_EXPORT int32_t config_clear_providers(int64_t config_handle) {
+  DEBUG_LOG("=== config_clear_providers ===");
+  if (config_handle == 0) {
+    DEBUG_ERROR("NULL config handle");
+    set_error("NULL config handle");
+    return -1;
+  }
+  
+  OgaConfig *config = reinterpret_cast<OgaConfig*>(config_handle);
+  OgaResult *result = OgaConfigClearProviders(config);
+  
+  if (check_oga_result(result, "Clear providers failed")) {
+    return -2;
+  }
+  
+  DEBUG_LOG("Providers cleared successfully");
+  return 1;
+}
+
+/**
+ * @brief Append an execution provider to the config.
+ */
+FFI_PLUGIN_EXPORT int32_t config_append_provider(int64_t config_handle,
+                                                  const char *provider_name) {
+  DEBUG_LOG("=== config_append_provider ===");
+  DEBUG_LOG("provider_name: %s", provider_name ? provider_name : "NULL");
+  
+  if (config_handle == 0) {
+    DEBUG_ERROR("NULL config handle");
+    set_error("NULL config handle");
+    return -1;
+  }
+  
+  if (provider_name == nullptr || strlen(provider_name) == 0) {
+    DEBUG_ERROR("NULL or empty provider name");
+    set_error("NULL or empty provider name");
+    return -2;
+  }
+  
+  OgaConfig *config = reinterpret_cast<OgaConfig*>(config_handle);
+  OgaResult *result = OgaConfigAppendProvider(config, provider_name);
+  
+  if (check_oga_result(result, "Append provider failed")) {
+    return -3;
+  }
+  
+  DEBUG_LOG("Provider '%s' appended successfully", provider_name);
+  return 1;
+}
+
+/**
+ * @brief Set an option for a specific execution provider.
+ */
+FFI_PLUGIN_EXPORT int32_t config_set_provider_option(int64_t config_handle,
+                                                      const char *provider_name,
+                                                      const char *key,
+                                                      const char *value) {
+  DEBUG_LOG("=== config_set_provider_option ===");
+  DEBUG_LOG("provider: %s, key: %s, value: %s",
+            provider_name ? provider_name : "NULL",
+            key ? key : "NULL",
+            value ? value : "NULL");
+  
+  if (config_handle == 0) {
+    DEBUG_ERROR("NULL config handle");
+    set_error("NULL config handle");
+    return -1;
+  }
+  
+  if (provider_name == nullptr || key == nullptr || value == nullptr) {
+    DEBUG_ERROR("NULL parameter");
+    set_error("NULL parameter");
+    return -2;
+  }
+  
+  OgaConfig *config = reinterpret_cast<OgaConfig*>(config_handle);
+  OgaResult *result = OgaConfigSetProviderOption(config, provider_name, key, value);
+  
+  if (check_oga_result(result, "Set provider option failed")) {
+    return -3;
+  }
+  
+  DEBUG_LOG("Option set successfully");
+  return 1;
+}
+
+/**
+ * @brief Run inference using a pre-configured config.
+ */
+FFI_PLUGIN_EXPORT const char *run_inference_with_config(int64_t config_handle,
+                                                         const char *prompt,
+                                                         const char *image_path) {
+  init_debug_features();
+  DEBUG_LOG("=== run_inference_with_config START ===");
+  DEBUG_LOG("config_handle: %lld", (long long)config_handle);
+  DEBUG_LOG("prompt length: %zu", prompt ? strlen(prompt) : 0);
+  DEBUG_LOG("image_path: %s", image_path ? image_path : "NULL");
+
+  if (config_handle == 0) {
+    DEBUG_ERROR("NULL config handle");
+    return set_error("NULL config handle");
+  }
+  
+  if (prompt == nullptr) {
+    DEBUG_ERROR("NULL prompt provided");
+    return set_error("NULL prompt provided");
+  }
+
+  OgaConfig *config = reinterpret_cast<OgaConfig*>(config_handle);
+
+  // Create model from config
+  DEBUG_LOG("Step 1: Creating model from config...");
+  OgaModel *model = nullptr;
+  OgaResult *result = OgaCreateModelFromConfig(config, &model);
+  if (check_oga_result(result, "Model creation from config failed") || model == nullptr) {
+    DEBUG_ERROR("Model creation from config failed");
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 1: Model created successfully from config");
+
+  // Create multimodal processor
+  DEBUG_LOG("Step 2: Creating multimodal processor...");
+  OgaMultiModalProcessor *processor = nullptr;
+  result = OgaCreateMultiModalProcessor(model, &processor);
+  if (check_oga_result(result, "MultiModal processor creation failed") ||
+      processor == nullptr) {
+    DEBUG_ERROR("MultiModal processor creation failed");
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 2: MultiModal processor created successfully");
+
+  // Create tokenizer from model
+  DEBUG_LOG("Step 3: Creating tokenizer...");
+  OgaTokenizer *tokenizer = nullptr;
+  result = OgaCreateTokenizer(model, &tokenizer);
+  if (check_oga_result(result, "Tokenizer creation failed") ||
+      tokenizer == nullptr) {
+    DEBUG_ERROR("Tokenizer creation failed");
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 3: Tokenizer created successfully");
+
+  // Load image if provided
+  OgaImages *images = nullptr;
+  OgaNamedTensors *named_tensors = nullptr;
+
+  if (image_path != nullptr && strlen(image_path) > 0) {
+    DEBUG_LOG("Step 4: Loading image from: %s", image_path);
+    result = OgaLoadImage(image_path, &images);
+    if (check_oga_result(result, "Image loading failed") || images == nullptr) {
+      DEBUG_ERROR("Image loading failed");
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+    DEBUG_LOG("Step 4: Image loaded successfully");
+  } else {
+    DEBUG_LOG("Step 4: No image provided, will process text-only through multimodal processor");
+  }
+
+  // Process through multimodal processor
+  DEBUG_LOG("Step 5: Processing prompt through multimodal processor...");
+  result = OgaProcessorProcessImages(processor, prompt, images, &named_tensors);
+  if (check_oga_result(result, "Multimodal processing failed") ||
+      named_tensors == nullptr) {
+    DEBUG_ERROR("Multimodal processing failed");
+    if (images)
+      OgaDestroyImages(images);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 5: Multimodal processing completed successfully");
+
+  // Create generator parameters
+  DEBUG_LOG("Step 6: Creating generator params...");
+  OgaGeneratorParams *params = nullptr;
+  result = OgaCreateGeneratorParams(model, &params);
+  if (check_oga_result(result, "Generator params creation failed") ||
+      params == nullptr) {
+    DEBUG_ERROR("Generator params creation failed");
+    if (named_tensors)
+      OgaDestroyNamedTensors(named_tensors);
+    if (images)
+      OgaDestroyImages(images);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  
+  // Set max_length to limit memory usage
+  DEBUG_LOG("Step 6a: Setting max_length to 2048...");
+  result = OgaGeneratorParamsSetSearchNumber(params, "max_length", 2048.0);
+  if (result != nullptr) {
+    DEBUG_ERROR("Failed to set max_length: %s", OgaResultGetError(result));
+    OgaDestroyResult(result);
+  } else {
+    DEBUG_LOG("Step 6a: max_length set successfully");
+  }
+  
+  DEBUG_LOG("Step 6: Generator params created successfully");
+
+  // Create generator
+  DEBUG_LOG("Step 7: Creating generator...");
+  OgaGenerator *generator = nullptr;
+  result = OgaCreateGenerator(model, params, &generator);
+  if (check_oga_result(result, "Generator creation failed") ||
+      generator == nullptr) {
+    DEBUG_ERROR("Generator creation failed");
+    OgaDestroyGeneratorParams(params);
+    if (named_tensors)
+      OgaDestroyNamedTensors(named_tensors);
+    if (images)
+      OgaDestroyImages(images);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 7: Generator created successfully");
+
+  // Set input tensors
+  DEBUG_LOG("Step 8: Setting input tensors...");
+  result = OgaGenerator_SetInputs(generator, named_tensors);
+  if (check_oga_result(result, "Setting input tensors failed")) {
+    DEBUG_ERROR("Setting input tensors failed");
+    OgaDestroyGenerator(generator);
+    OgaDestroyGeneratorParams(params);
+    if (named_tensors)
+      OgaDestroyNamedTensors(named_tensors);
+    if (images)
+      OgaDestroyImages(images);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 8: Input tensors set successfully");
+
+  // Create tokenizer stream
+  DEBUG_LOG("Step 9: Creating tokenizer stream...");
+  OgaTokenizerStream *stream = nullptr;
+  result = OgaCreateTokenizerStream(tokenizer, &stream);
+  if (check_oga_result(result, "Tokenizer stream creation failed") ||
+      stream == nullptr) {
+    DEBUG_ERROR("Tokenizer stream creation failed");
+    OgaDestroyGenerator(generator);
+    OgaDestroyGeneratorParams(params);
+    if (named_tensors)
+      OgaDestroyNamedTensors(named_tensors);
+    if (images)
+      OgaDestroyImages(images);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 9: Tokenizer stream created successfully");
+
+  // Generation loop
+  DEBUG_LOG("Step 10: Starting token generation loop...");
+  std::string generated_text;
+  int generated_count = 0;
+
+  while (!OgaGenerator_IsDone(generator)) {
+    result = OgaGenerator_GenerateNextToken(generator);
+    if (check_oga_result(result, "Generate next token failed")) {
+      DEBUG_ERROR("Generate next token failed at token %d", generated_count);
+      break;
+    }
+
+    const int32_t *tokens = nullptr;
+    size_t token_count = 0;
+    result = OgaGenerator_GetNextTokens(generator, &tokens, &token_count);
+    if (check_oga_result(result, "Get next tokens failed") ||
+        token_count == 0) {
+      DEBUG_ERROR("Get next tokens failed at token %d", generated_count);
+      break;
+    }
+
+    const char *token_text = nullptr;
+    result = OgaTokenizerStreamDecode(stream, tokens[0], &token_text);
+    if (!check_oga_result(result, "Token decode failed") &&
+        token_text != nullptr) {
+      generated_text += token_text;
+    }
+    generated_count++;
+    
+    if (generated_count % 50 == 0) {
+      DEBUG_LOG("Generated %d tokens so far...", generated_count);
+    }
+  }
+  DEBUG_LOG("Step 10: Generation complete. Total tokens: %d", generated_count);
+
+  // Cleanup
+  DEBUG_LOG("Step 11: Cleaning up resources...");
+  OgaDestroyTokenizerStream(stream);
+  OgaDestroyGenerator(generator);
+  OgaDestroyGeneratorParams(params);
+  if (named_tensors)
+    OgaDestroyNamedTensors(named_tensors);
+  if (images)
+    OgaDestroyImages(images);
+  OgaDestroyTokenizer(tokenizer);
+  OgaDestroyMultiModalProcessor(processor);
+  OgaDestroyModel(model);
+  DEBUG_LOG("Step 11: Cleanup complete");
+  DEBUG_LOG("=== run_inference_with_config END ===");
+
+  return set_result(generated_text);
+}
+
+/**
+ * @brief Run multi-image inference using a pre-configured config.
+ */
+FFI_PLUGIN_EXPORT const char *run_inference_multi_with_config(int64_t config_handle,
+                                                               const char *prompt,
+                                                               const char **image_paths,
+                                                               int32_t image_count) {
+  init_debug_features();
+  DEBUG_LOG("=== run_inference_multi_with_config START ===");
+  DEBUG_LOG("config_handle: %lld", (long long)config_handle);
+  DEBUG_LOG("prompt length: %zu", prompt ? strlen(prompt) : 0);
+  DEBUG_LOG("image_count: %d", image_count);
+
+  if (config_handle == 0) {
+    DEBUG_ERROR("NULL config handle");
+    return set_error("NULL config handle");
+  }
+  
+  if (prompt == nullptr) {
+    DEBUG_ERROR("NULL prompt provided");
+    return set_error("NULL prompt provided");
+  }
+
+  if (image_count > 0 && image_paths == nullptr) {
+    DEBUG_ERROR("NULL image_paths with image_count > 0");
+    return set_error("NULL image_paths with image_count > 0");
+  }
+
+  OgaConfig *config = reinterpret_cast<OgaConfig*>(config_handle);
+
+  // Create model from config
+  DEBUG_LOG("Step 1: Creating model from config...");
+  OgaModel *model = nullptr;
+  OgaResult *result = OgaCreateModelFromConfig(config, &model);
+  if (check_oga_result(result, "Model creation from config failed") || model == nullptr) {
+    DEBUG_ERROR("Model creation from config failed");
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 1: Model created successfully from config");
+
+  // Create multimodal processor
+  DEBUG_LOG("Step 2: Creating multimodal processor...");
+  OgaMultiModalProcessor *processor = nullptr;
+  result = OgaCreateMultiModalProcessor(model, &processor);
+  if (check_oga_result(result, "MultiModal processor creation failed") ||
+      processor == nullptr) {
+    DEBUG_ERROR("MultiModal processor creation failed");
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 2: MultiModal processor created successfully");
+
+  // Create tokenizer
+  DEBUG_LOG("Step 3: Creating tokenizer...");
+  OgaTokenizer *tokenizer = nullptr;
+  result = OgaCreateTokenizer(model, &tokenizer);
+  if (check_oga_result(result, "Tokenizer creation failed") ||
+      tokenizer == nullptr) {
+    DEBUG_ERROR("Tokenizer creation failed");
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 3: Tokenizer created successfully");
+
+  // Load images if provided
+  OgaImages *images = nullptr;
+  OgaStringArray *image_path_array = nullptr;
+  
+  if (image_count > 0) {
+    DEBUG_LOG("Step 4: Loading %d images...", image_count);
+    
+    // Create string array for image paths
+    result = OgaCreateStringArray(&image_path_array);
+    if (check_oga_result(result, "String array creation failed") ||
+        image_path_array == nullptr) {
+      DEBUG_ERROR("String array creation failed");
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+
+    // Add each image path to the array
+    for (int i = 0; i < image_count; i++) {
+      DEBUG_LOG("  Adding image %d: %s", i + 1, image_paths[i] ? image_paths[i] : "NULL");
+      if (image_paths[i] == nullptr) {
+        DEBUG_ERROR("NULL image path at index %d", i);
+        OgaDestroyStringArray(image_path_array);
+        OgaDestroyTokenizer(tokenizer);
+        OgaDestroyMultiModalProcessor(processor);
+        OgaDestroyModel(model);
+        return set_error("NULL image path in array");
+      }
+      result = OgaStringArrayAddString(image_path_array, image_paths[i]);
+      if (check_oga_result(result, "Add image path failed")) {
+        DEBUG_ERROR("Failed to add image path at index %d", i);
+        OgaDestroyStringArray(image_path_array);
+        OgaDestroyTokenizer(tokenizer);
+        OgaDestroyMultiModalProcessor(processor);
+        OgaDestroyModel(model);
+        return set_error(g_error_buffer);
+      }
+    }
+
+    // Load all images
+    result = OgaLoadImages(image_path_array, &images);
+    if (check_oga_result(result, "Image loading failed") || images == nullptr) {
+      DEBUG_ERROR("Failed to load images");
+      OgaDestroyStringArray(image_path_array);
+      OgaDestroyTokenizer(tokenizer);
+      OgaDestroyMultiModalProcessor(processor);
+      OgaDestroyModel(model);
+      return set_error(g_error_buffer);
+    }
+    DEBUG_LOG("Step 4: All images loaded successfully");
+  } else {
+    DEBUG_LOG("Step 4: No images - text-only inference");
+  }
+
+  // Process prompt and images
+  DEBUG_LOG("Step 5: Processing prompt and images...");
+  OgaNamedTensors *named_tensors = nullptr;
+  result = OgaProcessorProcessImages(processor, prompt, images, &named_tensors);
+  if (check_oga_result(result, "Processing failed") ||
+      named_tensors == nullptr) {
+    DEBUG_ERROR("Processing failed");
+    if (images)
+      OgaDestroyImages(images);
+    if (image_path_array)
+      OgaDestroyStringArray(image_path_array);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 5: Processing complete");
+
+  // Create generator params
+  DEBUG_LOG("Step 6: Creating generator params...");
+  OgaGeneratorParams *params = nullptr;
+  result = OgaCreateGeneratorParams(model, &params);
+  if (check_oga_result(result, "Generator params creation failed") ||
+      params == nullptr) {
+    DEBUG_ERROR("Generator params creation failed");
+    OgaDestroyNamedTensors(named_tensors);
+    if (images)
+      OgaDestroyImages(images);
+    if (image_path_array)
+      OgaDestroyStringArray(image_path_array);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 6: Generator params created");
+
+  // Create generator
+  DEBUG_LOG("Step 7: Creating generator...");
+  OgaGenerator *generator = nullptr;
+  result = OgaCreateGenerator(model, params, &generator);
+  if (check_oga_result(result, "Generator creation failed") ||
+      generator == nullptr) {
+    DEBUG_ERROR("Generator creation failed");
+    OgaDestroyGeneratorParams(params);
+    OgaDestroyNamedTensors(named_tensors);
+    if (images)
+      OgaDestroyImages(images);
+    if (image_path_array)
+      OgaDestroyStringArray(image_path_array);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 7: Generator created");
+
+  // Set input tensors
+  DEBUG_LOG("Step 8: Setting input tensors...");
+  result = OgaGenerator_SetInputs(generator, named_tensors);
+  if (check_oga_result(result, "Setting input tensors failed")) {
+    DEBUG_ERROR("Setting input tensors failed");
+    OgaDestroyGenerator(generator);
+    OgaDestroyGeneratorParams(params);
+    OgaDestroyNamedTensors(named_tensors);
+    if (images)
+      OgaDestroyImages(images);
+    if (image_path_array)
+      OgaDestroyStringArray(image_path_array);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 8: Input tensors set");
+
+  // Create tokenizer stream
+  DEBUG_LOG("Step 9: Creating tokenizer stream...");
+  OgaTokenizerStream *stream = nullptr;
+  result = OgaCreateTokenizerStream(tokenizer, &stream);
+  if (check_oga_result(result, "Tokenizer stream creation failed") ||
+      stream == nullptr) {
+    DEBUG_ERROR("Tokenizer stream creation failed");
+    OgaDestroyGenerator(generator);
+    OgaDestroyGeneratorParams(params);
+    OgaDestroyNamedTensors(named_tensors);
+    if (images)
+      OgaDestroyImages(images);
+    if (image_path_array)
+      OgaDestroyStringArray(image_path_array);
+    OgaDestroyTokenizer(tokenizer);
+    OgaDestroyMultiModalProcessor(processor);
+    OgaDestroyModel(model);
+    return set_error(g_error_buffer);
+  }
+  DEBUG_LOG("Step 9: Tokenizer stream created");
+
+  // Generation loop
+  DEBUG_LOG("Step 10: Starting token generation loop...");
+  std::string generated_text;
+  int generated_count = 0;
+
+  while (!OgaGenerator_IsDone(generator)) {
+    result = OgaGenerator_GenerateNextToken(generator);
+    if (check_oga_result(result, "Generate next token failed")) {
+      DEBUG_ERROR("Generate next token failed at token %d", generated_count);
+      break;
+    }
+
+    const int32_t *tokens = nullptr;
+    size_t token_count = 0;
+    result = OgaGenerator_GetNextTokens(generator, &tokens, &token_count);
+    if (check_oga_result(result, "Get next tokens failed") ||
+        token_count == 0) {
+      DEBUG_ERROR("Get next tokens failed at token %d", generated_count);
+      break;
+    }
+
+    const char *token_text = nullptr;
+    result = OgaTokenizerStreamDecode(stream, tokens[0], &token_text);
+    if (!check_oga_result(result, "Token decode failed") &&
+        token_text != nullptr) {
+      generated_text += token_text;
+    }
+    generated_count++;
+    
+    if (generated_count % 50 == 0) {
+      DEBUG_LOG("Generated %d tokens so far...", generated_count);
+    }
+  }
+  DEBUG_LOG("Step 10: Generation complete. Total tokens: %d", generated_count);
+
+  // Cleanup
+  DEBUG_LOG("Step 11: Cleaning up resources...");
+  OgaDestroyTokenizerStream(stream);
+  OgaDestroyGenerator(generator);
+  OgaDestroyGeneratorParams(params);
+  OgaDestroyNamedTensors(named_tensors);
+  if (images)
+    OgaDestroyImages(images);
+  if (image_path_array)
+    OgaDestroyStringArray(image_path_array);
+  OgaDestroyTokenizer(tokenizer);
+  OgaDestroyMultiModalProcessor(processor);
+  OgaDestroyModel(model);
+  DEBUG_LOG("Step 11: Cleanup complete");
+  DEBUG_LOG("=== run_inference_multi_with_config END ===");
+
+  return set_result(generated_text);
+}
+
+/**
+ * @brief Get the last error message.
+ */
+FFI_PLUGIN_EXPORT const char *get_last_error() {
+  return g_error_buffer.c_str();
+}
 
 } // extern "C"

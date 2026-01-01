@@ -1,3 +1,38 @@
+## 0.3.0
+
+* **New: Runtime Configuration API** - Configure execution providers from Dart at runtime!
+* Added `createConfig()` / `destroyConfig()` for managing configuration objects.
+* Added `configClearProviders()` / `configAppendProvider()` for customizing execution providers.
+* Added `configSetProviderOption()` for setting provider-specific options.
+* Added `runInferenceWithConfig()` for synchronous inference with custom config.
+* Added `runInferenceWithConfigAsync()` - **recommended** async method with full configuration support.
+* Added `runInferenceMultiWithConfig()` for synchronous multi-image inference with custom config.
+* Added `runInferenceMultiWithConfigAsync()` - **recommended** async method for multi-image with config.
+* Added `getLastError()` for detailed error messages from native layer.
+
+### Example Usage
+
+```dart
+// Use XNNPACK for optimized ARM inference on mobile
+final result = await onnx.runInferenceWithConfigAsync(
+  modelPath: '/path/to/model',
+  prompt: 'Hello!',
+  providers: ['XNNPACK'],  // Use XNNPACK execution provider
+);
+```
+
+### Supported Execution Providers
+
+| Provider | Platform | Description |
+|----------|----------|-------------|
+| `XNNPACK` | Android/iOS | Optimized ARM NEON kernels |
+| `QNN` | Android | Qualcomm Hexagon NPU (Snapdragon) |
+| `CoreML` | iOS/macOS | Apple Neural Engine |
+| `SNPE` | Android | Snapdragon Neural Processing Engine |
+| `OpenVINO` | Desktop | Intel optimized inference |
+
+> **Note**: `cpu` is NOT a valid provider. CPU execution is the default fallback.
+
 ## 0.2.0
 
 * **First confirmed working release!** Successfully tested on-device inference on Google Pixel 8a.
