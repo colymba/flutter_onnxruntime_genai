@@ -1,3 +1,21 @@
+## 0.4.0
+
+* **New: Performance Benchmarking** - Added comprehensive benchmarks for Gemma 3 4B on Pixel 8a.
+* **New: `OnnxGenAIConfig.optimizeForMobile()`** - Convenience method to configure thread counts for optimal mobile performance.
+* Added `hasFactoryBackup()` method to check if factory config backup exists.
+* Added `restoreFactoryConfig()` method to restore original `genai_config.json`.
+* Added `BENCHMARKING.md` documenting performance results across different configurations.
+
+### Performance Recommendations (Pixel 8a / Tensor G3)
+
+| Config | tok/s | Improvement |
+|--------|-------|-------------|
+| XNNPACK + 4 threads | 4.59 | **+87%** 🏆 |
+| Default + 4 threads | 4.53 | +84% |
+| Factory defaults | 2.46 | baseline |
+
+> **Key insight**: Use 4 intra-op threads on big.LITTLE SoCs. 8+ threads causes contention on efficiency cores.
+
 ## 0.3.0
 
 * **New: Runtime Configuration API** - Configure execution providers from Dart at runtime!

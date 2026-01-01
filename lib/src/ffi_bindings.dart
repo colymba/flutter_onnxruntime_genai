@@ -1412,12 +1412,85 @@ class OnnxGenAIConfig {
   }) async {
     return update({
       'model.context_length': contextLength,
+      // Thread counts are numbers, other session_options are strings
       'model.decoder.session_options.intra_op_num_threads': intraOpThreads,
       'model.decoder.session_options.inter_op_num_threads': interOpThreads,
       'search.max_length': maxLength,
       'search.past_present_share_buffer': pastPresentShareBuffer,
       'search.do_sample': doSample,
     });
+  }
+
+  /// Applies aggressive performance optimizations for maximum speed.
+  ///
+  /// This configuration pushes harder than [optimizeForMobile] by:
+  /// - Using more threads (Pixel 8a has 9 cores)
+  /// - Enabling all graph optimizations (ORT_ENABLE_ALL)
+  /// - Enabling memory pattern and CPU memory arena optimizations
+  /// - Using greedy decoding (no sampling overhead)
+  /// - Smaller context window to reduce memory pressure
+  /// - Enabling KV-cache buffer sharing
+  ///
+  /// **Warning:** These settings prioritize speed over quality. The model
+  /// may produce slightly different outputs compared to default settings.
+  ///
+  /// Recommended for devices:
+  /// - Pixel 8/8a/8 Pro (Tensor G3, 9 cores) → intraOpThreads: 8
+  /// - Pixel 7/7a/7 Pro (Tensor G2, 8 cores) → intraOpThreads: 7
+  /// - Samsung Galaxy S24 (Snapdragon 8 Gen 3, 8 cores) → intraOpThreads: 7
+  ///
+  /// Parameters:
+  /// - [maxLength]: Maximum tokens to generate (default: 1024, shorter = faster)
+  /// - [contextLength]: Maximum context window (default: 2048)
+  /// - [intraOpThreads]: Threads within an operation (default: 8 for big.LITTLE)
+  /// - [interOpThreads]: Threads between operations (default: 1)
+  ///
+  /// Returns the updated configuration.
+  Future<Map<String, dynamic>> optimizeAggressive({
+    int maxLength = 1024,
+    int contextLength = 2048,
+    int intraOpThreads = 8,
+    int interOpThreads = 1,
+  }) async {
+    return update({
+      // Model/context settings (integer)
+      'model.context_length': contextLength,
+      // Session options - thread counts are integers
+      'model.decoder.session_options.intra_op_num_threads': intraOpThreads,
+      'model.decoder.session_options.inter_op_num_threads': interOpThreads,
+      // Graph optimization: must be one of: ORT_DISABLE_ALL, ORT_ENABLE_BASIC,
+      // ORT_ENABLE_EXTENDED, ORT_ENABLE_ALL (string!)
+      'model.decoder.session_options.graph_optimization_level':
+          'ORT_ENABLE_ALL',
+      // Memory optimizations (booleans, NOT strings!)
+      'model.decoder.session_options.enable_mem_pattern': true,
+      'model.decoder.session_options.enable_cpu_mem_arena': true,
+      // Search/generation options - greedy for speed
+      // Integers:
+      'search.max_length': maxLength,
+      'search.min_length': 1,
+      'search.num_beams': 1,
+      'search.top_k': 1,
+      // Floats:
+      'search.temperature': 1.0,
+      'search.repetition_penalty': 1.0,
+      // Booleans:
+      'search.past_present_share_buffer': true,
+      'search.do_sample': false,
+      'search.early_stopping': true,
+    });
+  }
+
+  /// Prints the current configuration to the console for debugging.
+  ///
+  /// Useful for verifying which settings are applied.
+  Future<void> printConfig() async {
+    final config = await read();
+    final encoder = const JsonEncoder.withIndent('  ');
+    // ignore: avoid_print
+    print(
+      '[OnnxGenAIConfig] Current configuration:\n${encoder.convert(config)}',
+    );
   }
 
   /// Resets configuration to hardcoded default values.

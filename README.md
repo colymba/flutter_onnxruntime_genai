@@ -22,9 +22,11 @@ A Flutter FFI plugin that wraps the Microsoft [ONNX Runtime GenAI](https://githu
 
 | Model | Device | Status | Notes |
 |-------|--------|--------|-------|
-| [Gemma 3 4B Instruct](https://huggingface.co/onnxruntime/Gemma-3-ONNX/tree/main/gemma-3-4b-it/cpu_and_mobile/cpu-int4-rtn-block-32-acc-level-4) | Pixel 8a | ✅ Working | INT4 quantized, ~1240 tokens generated successfully |
+| [Gemma 3 4B Instruct](https://huggingface.co/onnxruntime/Gemma-3-ONNX/tree/main/gemma-3-4b-it/cpu_and_mobile/cpu-int4-rtn-block-32-acc-level-4) | Pixel 8a | ✅ Working | INT4 quantized |
 
-> If you've tested other models, please open a PR to add them to this list!
+> Tested other models or devices? Please open a PR to add them!
+
+📊 **[See detailed performance benchmarks →](BENCHMARKING.md)**
 
 ## 🤝 Contributing & Help Wanted
 
